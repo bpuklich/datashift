@@ -42,7 +42,7 @@ Gem::Specification.new do |s|
 
   if Gem::Version.new(Gem::VERSION) >= Gem::Version.new('1.2.0') then
     s.add_runtime_dependency 'rubyzip', '~> 1.1', '>= 1.1.6'
-    s.add_runtime_dependency 'spreadsheet', '~> 0.9', '>= 0.9.7'
+    s.add_runtime_dependency 'spreadsheet', '~> 1.0', '>= 1.0.0'
   else
     s.add_dependency(%q<spreadsheet>, [">= 1.1.6"])
     s.add_dependency(%q<rubyzip>, [">=  0.9.7"])

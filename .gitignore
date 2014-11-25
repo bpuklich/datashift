@@ -81,3 +81,6 @@ pkg
 
 # Additional
 spec/fixtures/db/datashift_test_models_db.sqlite
+
+/*.iml
+/.idea
