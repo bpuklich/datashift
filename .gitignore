@@ -27,6 +27,7 @@ MissingAttachmentRecords/*
 spec/logs
 spec/fixtures/results
 spec/private
+/private
 
 nbproject
 Thumbs.db
