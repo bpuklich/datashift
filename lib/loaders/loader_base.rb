@@ -174,13 +174,25 @@ module DataShift
     end
 
 
-    # Process any defaults user has specified, for those columns that are not included in
-    # the incoming import format
-    def process_missing_columns_with_defaults()
-      inbound_ops = @method_mapper.operator_names
-      @populator.default_values.each do |dn, dv|     
-        logger.debug "Processing default value #{dn} : #{dv}"
-        @populator.assignment(dn, @load_object, dv) unless(inbound_ops.include?(dn))
+    #TODO - Move code into Populator
+    # Process columns with a default value specified
+    def process_defaults()
+
+      @populator.default_values.each do |dname, dv|
+
+        method_detail = MethodDictionary.find_method_detail( load_object_class, dname )
+
+        if(method_detail)
+          logger.debug "Applying default value [#{dname}] (#{method_detail})"
+          @populator.prepare_and_assign(method_detail, load_object, dv)
+        else
+          logger.warn "No operator found for default [#{dname}] trying basic assignment"
+          begin
+            @populator.insistent_assignment(load_object, dv, dname)
+          rescue
+            logger.error "Badly specified default - could not set #{dname}(#{dv})"
+          end
+        end
       end
     end
     
@@ -240,21 +252,20 @@ module DataShift
     #   
     # We leave it to caller to manage any other aspects or problems in 'rest'
     #
-    def get_find_operator_and_rest(inbound_data)
-        
-      operator, rest = inbound_data.split(Delimiters::name_value_delim) 
-     
-      logger.info("Parsed inbound data into #{operator} << #{rest}")
-       
+    def get_operator_and_data(inbound_data)
+
+      operator, data = inbound_data.split(Delimiters::name_value_delim)
+
       # Find by operator embedded in row takes precedence over operator in column heading
-      if((rest.nil? || rest.empty?) && @populator.current_method_detail.find_by_operator)
-        # row contains 0.99 so rest is effectively operator, and operator is in method details
-        rest = operator
+      if((data.nil? || data.empty?) && @populator.current_method_detail.find_by_operator)
+        # row contains data only so operator becomes header via method details
+        data = operator
         operator = @populator.current_method_detail.find_by_operator
       end
-       
-      #puts "DEBUG: get_find_operator_and_rest: #{operator} => #{rest}"    
-      return operator, rest
+
+      logger.debug("LoaderBase - get_operator_and_data - [#{operator}] - [#{data}]")
+
+      return operator, data
     end
     
     # Process a value string from a column.
@@ -288,32 +299,50 @@ module DataShift
 
           columns.each do |col_str|
             
-            find_operator, col_values = get_find_operator_and_rest( col_str )
+            find_operator, col_values = get_operator_and_data( col_str )
                       
             raise "Cannot perform DB find by #{find_operator}. Expected format key:value" unless(find_operator && col_values)
              
             find_by_values = col_values.split(Delimiters::multi_value_delim)
             
             find_by_values << current_method_detail.find_by_value if(current_method_detail.find_by_value)           
-              
-            logger.info("Scan for multiple has_many associations #{find_by_values}")
-            
-            #RAILS 4 current_value = current_method_detail.operator_class.send("find_all_by_#{find_operator}", find_by_values )
-            current_value = current_method_detail.operator_class.where(find_operator => find_by_values)
 
-            logger.info("Scan result #{current_value.inspect}")
-                
-            unless(find_by_values.size == current_value.size)
-              found = current_value.collect {|f| f.send(find_operator) }
-              @load_object.errors.add( current_method_detail.operator, "Association with key(s) #{(find_by_values - found).inspect} NOT found")
-              logger.error "Association #{current_method_detail.operator} with key(s) #{(find_by_values - found).inspect} NOT found - Not added."
-              next if(current_value.empty?)
+            found_values = []
+
+              #if(find_by_values.size() == 1)
+               # logger.info("Find or create #{current_method_detail.operator_class} with #{find_operator} = #{find_by_values.inspect}")
+              #  item = current_method_detail.operator_class.where(find_operator => find_by_values.first).first_or_create
+              #else
+              #  logger.info("Find #{current_method_detail.operator_class} with #{find_operator} = values #{find_by_values.inspect}")
+              #  current_method_detail.operator_class.where(find_operator => find_by_values).all
+              #end
+
+            operator_class = current_method_detail.operator_class
+
+            logger.info("Find #{current_method_detail.operator_class} with #{find_operator} = #{find_by_values.inspect}")
+
+            find_by_values.each do |v|
+              begin
+                found_values << operator_class.where(find_operator => v).first_or_create
+              rescue => e
+                logger.error(e.inspect)
+                # TODO some way to define if this is a fatal error or not ?
+              end
             end
 
-            logger.info("Assigning #{current_value.inspect} (#{current_value.class}")
+            logger.info("Scan result #{found_values.inspect}")
+                
+            unless(find_by_values.size == found_values.size)
+              found = found_values.collect {|f| f.send(find_operator) }
+              @load_object.errors.add( current_method_detail.operator, "Association with key(s) #{(find_by_values - found).inspect} NOT found")
+              logger.error "Association [#{current_method_detail.operator}] with key(s) #{(find_by_values - found).inspect} NOT found - Not added."
+              next if(found_values.empty?)
+            end
+
+            logger.info("Assigning #{found_values.inspect} (#{found_values.class})")
             
             # Lookup Assoc's Model done, now add the found value(s) to load model's collection
-            @populator.prepare_and_assign(current_method_detail, @load_object, current_value)
+            @populator.prepare_and_assign(current_method_detail, @load_object, found_values)
           end # END HAS_MANY
         end
       else

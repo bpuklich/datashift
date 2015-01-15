@@ -79,7 +79,7 @@ module DataShift
       end
     end
 
-    require_libs = %w{ datashift loaders helpers }
+    require_libs = %w{ datashift loaders generators helpers }
 
     require_libs.each do |base|
       Dir[File.join(library_path, base, '*.rb')].each do |rb|
@@ -114,15 +114,20 @@ module DataShift
 
 end
 
-require_relative 'helpers/core_ext/to_b'
 
+require_relative 'datashift/delimiters'
+require_relative 'datashift/column_packer'
 require_relative 'datashift/logging'
 require_relative 'datashift/exceptions'
 require_relative 'datashift/guards'
 
+require_relative 'helpers/core_ext/to_b'
+require_relative 'helpers/core_ext/csv_file'
+
 require_relative 'datashift/method_detail'
 require_relative 'datashift/method_dictionary'
 require_relative 'datashift/method_mapper'
+require_relative 'datashift/model_mapper'
 
 DataShift::require_libraries
 

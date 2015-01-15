@@ -87,6 +87,8 @@ module DataShift
         # Rails 4 - query no longer returns an array
         if( value.is_a? ActiveRecord::Relation )
           @current_value = value.to_a
+        elsif( value.is_a? Array )
+          @current_value = value
         else
           @current_value = value.to_s
           
@@ -123,7 +125,9 @@ module DataShift
       
       return @current_value, @current_attribute_hash
     end
-    
+
+    # Main client hook
+
     def prepare_and_assign(method_detail, record, value)
       
       prepare_data(method_detail, value) 
@@ -138,16 +142,14 @@ module DataShift
        
       operator = current_method_detail.operator
 
-      logger.debug("Populator assigning data via #{current_method_detail.operator}")
+      logger.debug("Populator assigning data [#{current_value}] via #{current_method_detail.operator} (#{current_method_detail.operator_type})")
               
       if( current_method_detail.operator_for(:belongs_to) )
  
         insistent_belongs_to(current_method_detail, record, current_value)
 
       elsif( current_method_detail.operator_for(:has_many) )
-        
-        #puts "DEBUG : HAS_MANY [#{current_value.class.name.include?(operator.classify)}] [#{ModelMapper.class_from_string(current_value.class.name)}]" unless(current_value.is_a?(Array))
-     
+
         # The include? check is best I can come up with right now .. to handle module/namespaces
         # TODO - can we determine the real class type of an association
         # e.g given a association taxons, which operator.classify gives us Taxon, but actually it's Spree::Taxon
@@ -189,23 +191,20 @@ module DataShift
     def insistent_assignment(record, value, operator)
       
       op = operator + '=' unless(operator.include?('='))
-    
-      puts "DEBUG: insistent_assignment : #{op} => #{value} (#{value.class})"
-            
+
       begin
         record.send(op, value)
       rescue => e
-        puts "ERROR in insistent_assignment: #{e.inspect}"
-         
+
         Populator::insistent_method_list.each do |f|
           begin
             record.send(op, value.send( f) )
             break
           rescue => e
-            puts "DEBUG: insistent_assignment: #{e.inspect}"
             if f == Populator::insistent_method_list.last
-              puts  "I'm sorry I have failed to assign [#{value}] to #{operator}"
-              raise "I'm sorry I have failed to assign [#{value}] to #{operator}" unless value.nil?
+              logger.error(e.inspect)
+              logger.error("Failed to assign [#{value}] via operator #{operator}")
+              raise "Failed to assign [#{value}] to #{operator}" unless value.nil?
             end
           end
         end
@@ -216,27 +215,45 @@ module DataShift
     def insistent_belongs_to(method_detail, record, value )
 
       operator = method_detail.operator
-      
+
       if( value.class == method_detail.operator_class)
+        logger.info("Populator assigning #{value} to belongs_to association #{operator}")
         record.send(operator) << value
       else
 
-        Populator::insistent_find_by_list.each do |x|
-          begin
- 
-            # puts "DEBUG : insistent_belongs_to => #{method_detail.operator_class.respond_to?( "find_by_#{x}" )}"
-             
-            next unless method_detail.operator_class.respond_to?( "find_by_#{x}" )
-            item = method_detail.operator_class.send("find_or_create_by_#{x}", value)
-            
-            if(item)
-              record.send(operator + '=', item)
-              break
-            end
-          rescue => e
-            logger.error("Attempt to find  associated object failed for #{method_detail}")
-            if(x == Populator::insistent_method_list.last)
-              raise "Populator failed to assign [#{value}] via moperator #{operator}" unless value.nil?
+        # TODO - DRY all this
+        if(method_detail.find_by_operator)
+
+          item = method_detail.operator_class.where(method_detail.find_by_operator => value).first_or_create
+
+          if(item)
+            logger.info("Populator assigning #{item.inspect} to belongs_to association #{operator}")
+            record.send(operator + '=', item)
+          else
+            logger.error("Could not find or create [#{value}] for belongs_to association [#{operator}]")
+            raise CouldNotAssignAssociation.new "Populator failed to assign [#{value}] to belongs_to association [#{operator}]"
+          end
+
+        else
+          #try the default field names
+          Populator::insistent_find_by_list.each do |x|
+            begin
+
+              next unless method_detail.operator_class.respond_to?("where")
+
+              item = method_detail.operator_class.where(x => value).first_or_create
+
+              if(item)
+                logger.info("Populator assigning #{item.inspect} to belongs_to association #{operator}")
+                record.send(operator + '=', item)
+                break
+              end
+            rescue => e
+              logger.error(e.inspect)
+              logger.error("Failed attempting to find belongs_to for #{method_detail.pp}")
+              if(x == Populator::insistent_method_list.last)
+                raise CouldNotAssignAssociation.new "Populator failed to assign [#{value}] to belongs_to association [#{operator}]" unless value.nil?
+              end
             end
           end
         end
@@ -245,7 +262,7 @@ module DataShift
     end
     
     def assignment( operator, record, value )
-      #puts "DEBUG: RECORD CLASS #{record.class}"
+
       op = operator + '=' unless(operator.include?('='))
     
       begin
@@ -256,7 +273,6 @@ module DataShift
             record.send(op, value.send( f) )
             break
           rescue => e
-            #puts "DEBUG: insistent_assignment: #{e.inspect}"
             if f == Populator::insistent_method_list.last
               puts  "I'm sorry I have failed to assign [#{value}] to #{operator}"
               raise "I'm sorry I have failed to assign [#{value}] to #{operator}" unless value.nil?
@@ -281,8 +297,9 @@ module DataShift
     #
     def configure_from(load_object_class, yaml_file)
 
-      data = YAML::load( File.open(yaml_file) )
-      
+      data = YAML::load( ERB.new( IO.read(yaml_file) ).result )
+
+
       # TODO - MOVE DEFAULTS TO OWN MODULE 
       # decorate the loading class with the defaults/ove rides to manage itself
       #   IDEAS .....
@@ -306,17 +323,18 @@ module DataShift
       
       #puts load_object_class.new.to_yaml
       
-      logger.info("Read Datashift loading config: #{data.inspect}")
+      logger.info("Setting Populator defaults: #{data.inspect}")
       
       if(data[load_object_class.name])
-        
-        logger.info("Assigning defaults and over rides from config")
-        
+
         deflts = data[load_object_class.name]['datashift_defaults']
         default_values.merge!(deflts) if deflts
+
+        logger.info("Set Populator default_values: #{default_values.inspect}")
         
         ovrides = data[load_object_class.name]['datashift_overrides']
         override_values.merge!(ovrides) if ovrides
+        logger.info("Set Populator overrides: #{override_values.inspect}")
       end
       
 

@@ -23,22 +23,6 @@ module DataShift
     
     attr_accessor :method_details, :missing_methods
   
-    
-    # As well as just the column name, support embedding find operators for that column
-    # in the heading .. i.e Column header => 'BlogPosts:user_id' 
-    # ... association has many BlogPosts selected via find_by_user_id
-    # 
-    # in the heading .. i.e Column header => 'BlogPosts:user_name:John Smith' 
-    # ... association has many BlogPosts selected via find_by_user_name("John Smith")
-    #
-    def self.column_delim
-      @column_delim ||= ':'
-      @column_delim
-    end
-
-    def self.set_column_delim(x)  @column_delim = x; end
-    
-  
     def initialize
       @method_details = []
     end
@@ -47,10 +31,16 @@ module DataShift
     # Handles method names as defined by a user, from spreadsheets or file headers where the names
     # specified may not be exactly as required e.g handles capitalisation, white space, _ etc
     # 
-    # The header can also contain the fields to use in lookups, separated with MethodMapper::column_delim
-    # 
-    #   product:name or project:title  or user:email
-    # 
+    # The header can also contain the fields to use in lookups, separated with Delimiters ::column_delim
+    # For example specify that lookups on has_one association called 'product', be performed using name'
+    #   product:name
+    #
+    # The header can also contain a default value for the lookup field, again separated with Delimiters ::column_delim
+    #
+    # For example specify lookups on assoc called 'user', be performed using 'email' == 'test@blah.com'
+    #
+    #   user:email:test@blah.com
+    #
     # Returns: Array of matching method_details, including nils for non matched items
     # 
     # N.B Columns that could not be mapped are left in the array as NIL
@@ -59,15 +49,14 @@ module DataShift
     # 
     # Other callers can simply call compact on the results if the index not important.
     # 
-    # The Methoddetails instance will contain a pointer to the column index from which it was mapped.
-    # 
+    # The MethodDetails instance will contain a pointer to the column index from which it was mapped.
     # 
     # Options:
     # 
-    #   [:force_inclusion]  : List of columns that do not map to any operator but should be includeed in processing.
+    #   [:force_inclusion]  : List of columns that do not map to any operator but should be included in processing.
     #                     
     #       This provides the opportunity for loaders to provide specific methods to handle these fields
-    #       when no direct operator is available on the modle or it's associations
+    #       when no direct operator is available on the model or it's associations
     #       
     #   [:include_all]      : Include all headers in processing - takes precedence of :force_inclusion
     #
@@ -88,7 +77,7 @@ module DataShift
       @method_details, @missing_methods = [], []
     
       columns.each_with_index do |col_data, col_index|
-        
+
         raw_col_data = col_data.to_s
         
         if(raw_col_data.nil? or raw_col_data.empty?)
@@ -97,14 +86,13 @@ module DataShift
           next
         end
         
-        raw_col_name, lookup = raw_col_data.split(MethodMapper::column_delim) 
+        raw_col_name, lookup = raw_col_data.split(Delimiters::column_delim)
          
         md = MethodDictionary::find_method_detail(klass, raw_col_name)
-               
-        if(md.nil?)          
-          #puts "DEBUG: Check Forced\n #{forced}.include?(#{raw_col_name}) #{forced.include?(raw_col_name.downcase)}"
-         
+
+        if(md.nil?)
           if(options[:include_all] || forced.include?(raw_col_name.downcase))
+            logger.debug("Operator #{raw_col_name} not found but forced inclusion operative")
             md = MethodDictionary::add(klass, raw_col_name)
           end
         end
@@ -112,21 +100,36 @@ module DataShift
         if(md)       
           md.name = raw_col_name
           md.column_index = col_index
-          
-          # TODO we should check that the assoc on klass responds to the specified
-          # lookup key now (nice n early)
-          # active_record_helper = "find_by_#{lookup}"
+
           if(lookup)
-            find_by, find_value = lookup.split(MethodMapper::column_delim) 
-            md.find_by_value    = find_value 
-            md.find_by_operator = find_by # TODO and klass.x.respond_to?(active_record_helper))
-            #puts "DEBUG: Method Detail #{md.name};#{md.operator} : find_by_operator #{md.find_by_operator}"
+            logger.info("Lookup data [#{lookup}] - specified for association #{md.operator}")
+
+            md.find_by_operator, md.find_by_value = lookup.split(Delimiters::name_value_delim)
+
+            # Example :
+            # Project:name:My Best Project
+            #   User (klass) has_one project (operator) lookup by name  (find_by_operator) == 'My Best Project' (find_by_value)
+            #   User.project.where( :name => 'My Best Project')
+
+            # check the finder method name is a valid field on the actual association class
+
+            if(klass.reflect_on_association(md.operator) &&
+               klass.reflect_on_association(md.operator).klass.new.respond_to?(md.find_by_operator))
+              logger.info("Complex Lookup specified for [#{md.operator}] : on field [#{md.find_by_operator}] (optional value [#{md.find_by_value}])")
+            else
+              logger.warn("Find by operator [#{md.find_by_operator}] Not Found on association [#{md.operator}] on Class #{klass.name} (#{md.inspect})")
+              logger.warn("Check column (#{md.column_index}) heading - e.g association field names are case sensitive")
+              md.find_by_operator, md.find_by_value = nil, nil
+            end
           end
         else
           # TODO populate unmapped with a real MethodDetail that is 'null' and create is_nil
+          logger.warn("No operator or association found for Header #{raw_col_name}")
           @missing_methods << raw_col_name
         end
-        
+
+        logger.debug("Column [#{col_data}] (#{col_index}) - mapped to :\n#{md.inspect}")
+
         @method_details << md
         
       end

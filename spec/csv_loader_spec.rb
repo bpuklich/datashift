@@ -14,16 +14,12 @@ include DataShift
 
 describe 'Csv Loader' do
 
-  include_context "ActiveRecordTestModelsConnected"
-
   before(:each) do
     DataShift::MethodDictionary.clear
 
     @method_mapper = DataShift::MethodMapper.new
   end
 
-
-  include_context "ClearAndPopulateProject"
 
   before(:each) do
 
@@ -104,7 +100,7 @@ describe 'Csv Loader' do
     count = Project.count
     loader.perform_load( ifixture_file('csv/ProjectsMultiCategoriesHeaderLookup.csv'))
 
-    loader.loaded_count.should == (Project.count - count)
+    expect(loader.loaded_count).to eq (Project.count - count)
     loader.loaded_count.should > 3
 
     {'004' => 4, '005' => 1, '006' => 0, '007' => 1 }.each do|title, expected|
@@ -190,7 +186,6 @@ describe 'Csv Loader' do
     loader = CsvLoader.new(Project)
 
     loader.configure_from( ifixture_file('ProjectsDefaults.yml') )
-
 
     loader.perform_load( ifixture_file('csv/ProjectsSingleCategories.csv') )
 

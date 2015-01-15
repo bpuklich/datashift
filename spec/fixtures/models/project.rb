@@ -5,6 +5,8 @@
 
 class Project < ActiveRecord::Base
 
+  belongs_to :user
+
   has_one  :owner
 
   has_many :milestones
@@ -24,4 +26,10 @@ class Project < ActiveRecord::Base
     10 * value_as_double
   end
   
+end
+
+
+module DataShift
+  class AClassInAModule
+  end
 end

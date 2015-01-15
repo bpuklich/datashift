@@ -10,7 +10,8 @@ module DataShift
   class MethodDictionary
 
     include DataShift::Logging
-   
+    extend DataShift::Logging
+
     # Return true if dictionary has  been populated for  klass
     def self.for?(klass)
       any = has_many[klass] || belongs_to[klass] || has_one[klass] || assignments[klass]
@@ -26,6 +27,8 @@ module DataShift
     def self.find_operators(klass, options = {} )
       
       raise "Cannot find operators supplied klass nil #{klass}" if(klass.nil?)
+
+      logger.debug("MethodDictionary - building operators information for #{klass}")
 
       # Find the has_many associations which can be populated via <<
       if( options[:reload] || has_many[klass].nil? )
@@ -63,8 +66,6 @@ module DataShift
         
         assignments[klass].uniq!
 
-        #puts "\nDEBUG: DICT Setters\n#{assignments[klass]}\n"
-        
         assignments[klass].each do |assign|
           column_types[klass] ||= {}
           column_def = klass.columns.find{ |col| col.name == assign }
@@ -95,8 +96,13 @@ module DataShift
     
     # Build a thorough and usable picture of the operators by building dictionary of our MethodDetail
     # objects which can be used to import/export data to objects of type 'klass'
-    #
-    def self.build_method_details( klass )
+    # Subsequent calls with same class will return existign mapping
+    # To over ride this behaviour, supply :force => true to force  regeneration
+
+    def self.build_method_details( klass, options = {} )
+
+      return method_details_mgrs[klass] if(method_details_mgrs[klass] && !options[:force])
+
       method_details_mgr = MethodDetailsManager.new( klass )
       
       method_details_mgrs[klass] = method_details_mgr

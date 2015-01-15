@@ -10,8 +10,25 @@
 #
 module DataShift
 
- 
   module Delimiters
+
+    # I made these class methods, feeling delims are 'global'
+    # I dunno now if thats good pattern or not
+
+
+    # As well as just the column name, support embedding find operators for that column
+    # in the heading .. i.e Column header => 'BlogPosts:user_id'
+    # ... association has many BlogPosts selected via find_by_user_id
+    #
+    # in the heading .. i.e Column header => 'BlogPosts:user_name:John Smith'
+    # ... association has many BlogPosts selected via find_by_user_name("John Smith")
+    #
+    def self.column_delim
+      @column_delim ||= ':'
+      @column_delim
+    end
+
+    def self.set_column_delim(x)  @column_delim = x; end
 
 
     # Support multiple associations being added to a base object to be specified in a single column.
@@ -40,13 +57,12 @@ module DataShift
     end
 
     def self.set_name_value_delim(x)  @name_value_delim = x; end
-    # TODO - support embedded object creation/update via hash (which hopefully we should be able to just forward to AR)
-    #
-    #      |Category|
-    #      name:new{ :date => '20110102', :owner = > 'blah'}
-    #
-    
-    
+
+
+    # The simple seperator for a list of values whether it be
+    #     "Colour:red,green,blue".split(Delimiters::multi_value_delim) => [red,green,blue]
+    #     {name => value, n2 => v2}.split(Delimiters::multi_value_delim) => [ [name => value], [n2 => v2] ]
+
     def self.multi_value_delim
       @multi_value_delim ||= ','
     end
@@ -105,9 +121,28 @@ module DataShift
     
     def self.csv_delim=(x) set_csv_delim(x); end
     def self.set_csv_delim(x) @csv_delim = x; end
-    
+
     def self.eol
       "\n"
+    end
+
+    # surround text in suitable quotes e.g "hello world, how are you" => ' "hello world, how are you" '
+    def text_delim
+      @text_delim ||= "\'"
+    end
+
+    def text_delim=(x)
+      @text_delim = x
+    end
+
+    # seperator for identifying normal key value pairs
+
+    def self.key_value_sep
+      @key_value_sep ||= "=>"   #TODO check Ruby version and use appropriate has style ?
+    end
+
+    def self.key_value_sep=(x)
+      @key_value_sep = x
     end
 
   end

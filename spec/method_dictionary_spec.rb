@@ -12,8 +12,6 @@ require File.join(File.dirname(__FILE__), 'spec_helper')
 require 'method_dictionary'
 
 describe 'Method Dictionary' do
-
-  include_context "ActiveRecordTestModelsConnected"
   
   before(:each) do
     DataShift::MethodDictionary.clear
@@ -42,7 +40,7 @@ describe 'Method Dictionary' do
     DataShift::MethodDictionary.assignments[Project].should include('value_as_text')
 
     DataShift::MethodDictionary.belongs_to.should_not be_empty
-    DataShift::MethodDictionary.belongs_to[Project].should be_empty
+    expect(DataShift::MethodDictionary.belongs_to[Project]).to include 'user'
 
 
     DataShift::MethodDictionary.column_types.should be_is_a(Hash)

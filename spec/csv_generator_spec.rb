@@ -15,17 +15,7 @@ include DataShift
 describe 'CSV Generator' do
 
   before(:all) do
-
-    # load our test model definitions - Project etc
-    require ifixture_file('test_model_defs')
-
-    db_connect( 'test_file' )    # , test_memory, test_mysql
-
-    # handle migration changes or reset of test DB
-    migrate_up
-
-    db_clear()    # todo read up about proper transactional fixtures
-    results_clear()
+    results_clear("*.csv")
 
     @klazz = Project
     @assoc_klazz = Category
@@ -116,7 +106,7 @@ describe 'CSV Generator' do
   end
 
 
-  it "should enable us to exclude certain associations in template .csv file ", :fail => true do
+  it "should enable us to exclude certain associations in template .csv file " do
 
     expected = result_file('project_plus_some_assoc_template_spec.csv')
 
@@ -144,7 +134,7 @@ describe 'CSV Generator' do
   end
 
 
-   it "should enable us to remove standard rails feilds from template .csv file ", :fail => true do
+   it "should enable us to remove standard rails feilds from template .csv file " do
 
     expected = result_file('project_plus_some_assoc_template_spec.csv')
 
