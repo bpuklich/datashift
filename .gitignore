@@ -2,6 +2,7 @@
 
 sandbox
 sandbox/**
+spec/rails_sandbox
 
 # developing a gem so don't commit lock file
 Gemfile.lock
