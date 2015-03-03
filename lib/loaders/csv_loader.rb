@@ -58,7 +58,7 @@ module DataShift
 
             @reporter.processed_object_count += 1
 
-            logger.info("Begin processing Row #{i+1}  from CSV file")
+            logger.info("Begin processing Row #{@reporter.processed_object_count}  from CSV file")
 
             begin
               # First assign any default values for columns not included in parsed_file
@@ -87,10 +87,12 @@ module DataShift
 
             rescue => e
               failure(row, true)
-              logger.error "Failed to process row [#{i}] (#{@current_row})"
+              logger.error e.inspect
+              logger.error e.backtrace.first.inspect
+              logger.error "Failed to process row [#{@reporter.processed_object_count}] (#{@current_row})"
 
               if(verbose)
-                puts "Failed to process row [#{i}] (#{@current_row})"
+                puts "Failed to process row [#{@reporter.processed_object_count}] (#{@current_row})"
                 puts e.inspect
               end
 
@@ -103,21 +105,10 @@ module DataShift
 
             logger.debug "Attempting Save on : #{load_object.inspect}"
 
-            unless(save)
-              failure
-              if(load_object)
-                load_object.valid? if(load_object.errors.empty?)  # seen situations where save fails but errors empty ?
-                logger.error "Failed to save row [#{i}] [#{@current_row}]"
-                logger.error "Rails errors : #{load_object.errors.full_messages.inspect}"
-              end
-            else
-              logger.info "Row #{@current_row} succesfully SAVED : ID #{load_object.id}"
-              @reporter.add_loaded_object(@load_object)
-            end
+            save_and_report
 
             # don't forget to reset the object or we'll update rather than create
             new_load_object
-
           end
 
           raise ActiveRecord::Rollback if(options[:dummy]) # Don't actually create/upload to DB if we are doing dummy run
@@ -140,8 +131,8 @@ module DataShift
 
     include DataShift::CsvLoading
 
-    def initialize(klass, find_operators = true, object = nil, options = {})
-      super( klass, find_operators, object, options )
+    def initialize(klass, object = nil, options = {})
+      super( klass, object, options )
       raise "Cannot load - failed to create a #{klass}" unless @load_object
     end
 

@@ -38,24 +38,23 @@ module DataShift
   class BadFile < StandardError; end
   
   class MappingDefinitionError < StandardError; end
-  class DataProcessingError < StandardError; end
+
 
   class MissingHeadersError < StandardError; end
   class MissingMandatoryError < StandardError; end
 
-  class RecordNotFound < StandardError; end
-  
   class PathError < StandardError; end
   
   class BadUri < StandardError; end
 
 end
 
-
 DataShift::DataShiftException.generate( "ConnectionError")
 DataShift::DataShiftException.generate( "CouldNotAssignAssociation")
 DataShift::DataShiftException.generate( "CreateAttachmentFailed")
+DataShift::DataShiftException.generate( "DataProcessingError")
 DataShift::DataShiftException.generate( "FileNotFound")
 DataShift::DataShiftException.generate( "NoSuchClassError")
 DataShift::DataShiftException.generate( "MissingConfigOptionError")
+DataShift::DataShiftException.generate( "RecordNotFound")
 DataShift::DataShiftException.generate( "SaveError")

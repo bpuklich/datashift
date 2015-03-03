@@ -14,10 +14,12 @@ require 'logging'
 
 module DataShift
 
+  Struct.new("Substitution", :pattern, :replacement)
+
   class Populator
     
     include DataShift::Logging
-        
+
     def self.insistent_method_list
       @insistent_method_list ||= [:to_s, :to_i, :to_f, :to_b]
     end
@@ -27,8 +29,19 @@ module DataShift
     def self.insistent_find_by_list
       @insistent_find_by_list ||= [:name, :title, :id]
     end
-    
-    
+
+
+    # Default data embedded in column headings - so effectively apply globally
+    # to teh whole column - hence class methods
+    def self.set_header_default_data(operator, data )
+      header_default_data[operator] = data
+    end
+
+    def self.header_default_data
+      @header_default_data ||= {}
+    end
+
+
     attr_reader :current_value, :original_value_before_override
     attr_reader :current_col_type
     
@@ -83,11 +96,10 @@ module DataShift
      
       begin
         @prepare_data_const_regexp ||= Regexp.new( Delimiters::attribute_list_start + ".*" + Delimiters::attribute_list_end)
-              
-        # Rails 4 - query no longer returns an array
-        if( value.is_a? ActiveRecord::Relation )
+
+        if( value.is_a? ActiveRecord::Relation ) # Rails 4 - query no longer returns an array
           @current_value = value.to_a
-        elsif( value.is_a? Array )
+        elsif( value.class.ancestors.include?(ActiveRecord::Base) || value.is_a?(Array))
           @current_value = value
         else
           @current_value = value.to_s
@@ -104,23 +116,35 @@ module DataShift
         @current_attribute_hash ||= {}
        
         @current_method_detail = method_detail
-      
+
         @current_col_type = @current_method_detail.col_type
       
         operator = method_detail.operator
-      
-        override_value(operator)
-        
-        if((value.nil? || value.to_s.empty?) && default_value(operator))
-          @current_value = default_value(operator)
+
+        if(has_override?(operator))
+          override_value(operator)      # takes precedence over anything else
+        else
+          # if no value check for a defaults from config, headers
+          if(default_value(operator))
+            @current_value = default_value(operator)
+          elsif(Populator::header_default_data[operator])
+            @current_value = Populator::header_default_data[operator].to_s
+          elsif(Populator::header_default_data[operator])
+            @current_value = Populator::header_default_data[operator].to_s
+          elsif(method_detail.find_by_value)
+            @current_value = method_detail.find_by_value
+          end if(value.nil? || value.to_s.empty?)
         end
-      
+
+        substitute( operator )
+
         @current_value = "#{prefix(operator)}#{@current_value}" if(prefix(operator))
         @current_value = "#{@current_value}#{postfix(operator)}" if(postfix(operator))
 
       rescue => e
         logger.error("populator failed to prepare data supplied for operator #{method_detail.operator}")
         logger.error("populator stacktrace: #{e.backtrace.join('\\n')}")
+        raise DataProcessingError.new("opulator failed to prepare data #{value} for operator #{method_detail.operator}")
       end
       
       return @current_value, @current_attribute_hash
@@ -129,20 +153,19 @@ module DataShift
     # Main client hook
 
     def prepare_and_assign(method_detail, record, value)
-      
+
       prepare_data(method_detail, value) 
        
       assign(record)
-      
     end
     
     def assign(record)
-     
+
       raise NilDataSuppliedError.new("No method detail - cannot assign data") unless(current_method_detail)
        
       operator = current_method_detail.operator
 
-      logger.debug("Populator assigning data [#{current_value}] via #{current_method_detail.operator} (#{current_method_detail.operator_type})")
+      logger.debug("Populator assign - [#{current_value}] via #{current_method_detail.operator} (#{current_method_detail.operator_type})")
               
       if( current_method_detail.operator_for(:belongs_to) )
  
@@ -155,10 +178,11 @@ module DataShift
         # e.g given a association taxons, which operator.classify gives us Taxon, but actually it's Spree::Taxon
         # so how do we get from 'taxons' to Spree::Taxons ? .. check if further info in reflect_on_all_associations
 
-        if(current_value.is_a?(Array) || current_value.class.name.include?(operator.classify))
+        begin #if(current_value.is_a?(Array) || current_value.class.name.include?(operator.classify))
           record.send(operator) << current_value
-        else
-          logger.error "Cannot assign to has_many operator [#{operator}] - #{current_value} (#{current_value.class})"
+        rescue => e
+          logger.error e.inspect
+          logger.error "Cannot assign #{current_value.inspect} (#{current_value.class}) to has_many association [#{operator}] "
         end
 
       elsif( current_method_detail.operator_for(:has_one) )
@@ -169,12 +193,11 @@ module DataShift
         else
           logger.error("ERROR #{current_value.class} - Not expected type for has_one #{operator} - cannot assign")
           # TODO -  Not expected type - maybe try to look it up somehow ?"
-          #insistent_has_many(record, @current_value)
         end
 
       elsif( current_method_detail.operator_for(:assignment) && current_col_type)
-        logger.debug("Assignging #{current_value} => [#{operator}] (CAST 2 TYPE  #{current_col_type.type_cast( current_value ).inspect})")
-        
+        logger.debug("Assign #{current_value} => [#{operator}] (CAST 2 TYPE  #{current_col_type.type_cast( current_value ).inspect})")
+
         record.send( operator + '=' , current_method_detail.col_type.type_cast( current_value ) )
 
       elsif( current_method_detail.operator_for(:assignment) )
@@ -299,29 +322,7 @@ module DataShift
 
       data = YAML::load( ERB.new( IO.read(yaml_file) ).result )
 
-
-      # TODO - MOVE DEFAULTS TO OWN MODULE 
-      # decorate the loading class with the defaults/ove rides to manage itself
-      #   IDEAS .....
-      #
-      #unless(@default_data_objects[load_object_class])
-      #
-      #   @default_data_objects[load_object_class] = load_object_class.new
-      
-      #  default_data_object = @default_data_objects[load_object_class]
-      
-      
-      # default_data_object.instance_eval do
-      #  def datashift_defaults=(hash)
-      #   @datashift_defaults = hash
-      #  end
-      #  def datashift_defaults
-      #    @datashift_defaults
-      #  end
-      #end unless load_object_class.respond_to?(:datashift_defaults)
-      #end
-      
-      #puts load_object_class.new.to_yaml
+      # TODO - MOVE DEFAULTS TO OWN MODULE
       
       logger.info("Setting Populator defaults: #{data.inspect}")
       
@@ -335,11 +336,40 @@ module DataShift
         ovrides = data[load_object_class.name]['datashift_overrides']
         override_values.merge!(ovrides) if ovrides
         logger.info("Set Populator overrides: #{override_values.inspect}")
+
+        subs = data[load_object_class.name]['datashift_substitutions']
+
+        subs.each do |o, sub|
+          # TODO support single array as well as multiple [[..,..], [....]]
+          sub.each { |tuple| set_substitution(o, tuple) }
+        end if(subs)
+
       end
-      
 
     end
-    
+
+    # Set a default value to be used to populate Model.operator
+    # Generally defaults will be used when no value supplied.
+    def set_substitution(operator, value )
+      substitutions[operator] ||= []
+
+      substitutions[operator] << Struct::Substitution.new(value[0], value[1])
+    end
+
+    def substitutions
+      @substitutions ||= {}
+    end
+
+    def substitute( operator )
+      subs = substitutions[operator] || {}
+
+      subs.each do |s|
+        @original_value_before_override = @current_value
+        @current_value = @original_value_before_override.gsub(s.pattern.to_s, s.replacement.to_s)
+      end
+    end
+
+
     # Set a value to be used to populate Model.operator
     # Generally over-rides will be used regardless of what value caller supplied.
     def set_override_value( operator, value )
@@ -357,7 +387,12 @@ module DataShift
         @current_value = @override_values[operator]
       end
     end
-    
+
+
+    def has_override?( operator )
+        return override_values.has_key?(operator)
+    end
+
     # Set a default value to be used to populate Model.operator
     # Generally defaults will be used when no value supplied.
     def set_default_value(operator, value )
@@ -372,7 +407,6 @@ module DataShift
     def default_value(operator)
       default_values[operator]
     end
-    
 
     def set_prefix( operator, value )
       prefixes[operator] = value
@@ -397,8 +431,7 @@ module DataShift
     def postfixes
       @postfixes ||= {}
     end
-    
-    
+
   end
   
 end

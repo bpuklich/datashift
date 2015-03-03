@@ -19,69 +19,74 @@ module DataShift
 
     include DataShift::Logging
     include DataShift::Querying
-      
+
     attr_reader :headers
 
     attr_accessor :method_mapper
+
+    # The inbound row/line number
+    attr_accessor :current_row_idx
 
     attr_accessor :load_object_class, :load_object
 
     attr_accessor :reporter
     attr_accessor :populator
-    
+
     attr_accessor :config, :verbose
 
+
     def options() return @config; end
-    
+
 
     # Setup loading
     # 
     # Options to drive building the method dictionary for a class, enabling headers to be mapped to operators on that class.
-    #  
-    # find_operators [default = true] : Populate method dictionary with operators and method details
     #      
     # Options
-    #  
     #  :reload           : Force load of the method dictionary for object_class even if already loaded
     #  :instance_methods : Include setter/delegate style instance methods for assignment, as well as AR columns
-    #  :verbose          : Verboise logging and to STDOUT
+    #  :verbose          : Verbose logging and to STDOUT
     #
-    def initialize(object_class, find_operators = true, object = nil, options = {})
+    def initialize(object_class, object = nil, options = {})
       @load_object_class = object_class
-      
+
+      logger.info("Loading objects of type #{@load_object_class} (#{object}")
+
       @populator = if(options[:populator].is_a?(String))
-        ::Object.const_get(options[:populator]).new
-      elsif(options[:populator].is_a?(Class))
-        options[:populator].new
-      else
-        DataShift::Populator.new
-      end
-          
+                     ::Object.const_get(options[:populator]).new
+                   elsif(options[:populator].is_a?(Class))
+                     options[:populator].new
+                   else
+                     DataShift::Populator.new
+                   end
+
       # Gather names of all possible 'setter' methods on AR class (instance variables and associations)
-      if((find_operators && !MethodDictionary::for?(object_class)) || options[:reload])
+      if( !MethodDictionary::for?(object_class) || options[:reload] )
         #puts "DEBUG Building Method Dictionary for class #{object_class}"
-        
+
         meth_dict_opts = options.extract!(:reload, :instance_methods)
         DataShift::MethodDictionary.find_operators( @load_object_class, meth_dict_opts)
-        
+
         # Create dictionary of data on all possible 'setter' methods which can be used to
         # populate or integrate an object of type @load_object_class
         DataShift::MethodDictionary.build_method_details(@load_object_class)
       end
-      
+
       @method_mapper = DataShift::MethodMapper.new
       @config = options.dup    # clone can cause issues like 'can't modify frozen hash'
 
       @verbose = @config[:verbose]
-      
+
+      @current_row_idx = 0
+
       @headers = []
-     
+
       @reporter = DataShift::Reporter.new
-      
+
       reset(object)
     end
 
-    
+
     # Based on filename call appropriate loading function
     # Currently supports :
     #   Excel/Open Office files saved as .xls
@@ -102,11 +107,11 @@ module DataShift
     def perform_load( file_name, options = {} )
 
       raise DataShift::BadFile, "Cannot load #{file_name} file not found." unless(File.exists?(file_name))
-        
+
       logger.info("Perform Load Options:\n#{options.inspect}")
-      
+
       ext = File.extname(file_name)
-      
+
       # TODO - make more modular - these methods doing too much, for example move the object creation/reset
       # out of these perform... methods to make it easier to over ride that behaviour
       if(ext.casecmp('.xls') == 0)
@@ -119,9 +124,9 @@ module DataShift
     end
 
     def report
-      @reporter.report 
+      @reporter.report
     end
-    
+
     # Core API
     # 
     # Given a list of free text column names from a file, 
@@ -147,19 +152,19 @@ module DataShift
     #
     def populate_method_mapper_from_headers( headers, options = {} )
       @headers = headers
-      
+
       mandatory = options[:mandatory] || []
-               
+
       strict = (options[:strict] == true)
-      
-      begin 
+
+      begin
         @method_mapper.map_inbound_headers_to_methods( load_object_class, @headers, options )
       rescue => e
         puts e.inspect, e.backtrace
         logger.error("Failed to map header row to set of database operators : #{e.inspect}")
         raise MappingDefinitionError, "Failed to map header row to set of database operators"
       end
-      
+
       unless(@method_mapper.missing_methods.empty?)
         logger.warn("Following headings couldn't be mapped to #{load_object_class} \n#{@method_mapper.missing_methods.inspect}")
         raise MappingDefinitionError, "Missing mappings for columns : #{@method_mapper.missing_methods.join(",")}" if(strict)
@@ -169,7 +174,7 @@ module DataShift
         @method_mapper.missing_mandatory(mandatory).each { |er| puts "ERROR: Mandatory column missing - expected column '#{er}'" }
         raise MissingMandatoryError, "Mandatory columns missing  - please fix and retry."
       end
-      
+
       @method_mapper
     end
 
@@ -183,7 +188,7 @@ module DataShift
         method_detail = MethodDictionary.find_method_detail( load_object_class, dname )
 
         if(method_detail)
-          logger.debug "Applying default value [#{dname}] (#{method_detail})"
+          logger.debug "Applying default value [#{dname}] on (#{method_detail.operator})"
           @populator.prepare_and_assign(method_detail, load_object, dv)
         else
           logger.warn "No operator found for default [#{dname}] trying basic assignment"
@@ -195,15 +200,15 @@ module DataShift
         end
       end
     end
-    
+
     # Core API - Given a single free text column name from a file, search method mapper for
     # associated operator on base object class.
     # 
     # If suitable association found, process row data and then assign to current load_object
     def find_and_process(column_name, data)
-      
+
       puts "WARNING: MethodDictionary empty for class #{load_object_class}" unless(MethodDictionary.for?(load_object_class))
-        
+
       method_detail = MethodDictionary.find_method_detail( load_object_class, column_name )
 
       if(method_detail)
@@ -213,11 +218,11 @@ module DataShift
         @load_object.errors.add(:base, "No matching method found for column #{column_name}")
       end
     end
-    
-    
+
+
     # Any Config under key 'LoaderBase' is merged over existing options - taking precedence.
     #  
-    # Any Config under a key equal to the full name of the Loader class (e.g DataShift::SpreeHelper::ImageLoader)
+    # Any Config under a key equal to the full name of the Loader class (e.g DataShift::SpreeEcom::ImageLoader)
     # is merged over existing options - taking precedence.
     # 
     #  Format :
@@ -227,26 +232,31 @@ module DataShift
     #
     def configure_from(yaml_file)
 
-      data = YAML::load( File.open(yaml_file) )
-      
-      logger.info("Read Datashift loading config: #{data.inspect}")
-        
+      logger.info("Reading Datashift loader config from: #{yaml_file.inspect}")
+
+      data = YAML::load( ERB.new( IO.read(yaml_file) ).result )
+
+      logger.info("Read Datashift config: #{data.inspect}")
+
       if(data['LoaderBase'])
         @config.merge!(data['LoaderBase'])
       end
-       
-      if(data[self.class.name])    
+
+      if(data[self.class.name])
         @config.merge!(data[self.class.name])
       end
-      
+
       @populator.configure_from(load_object_class, yaml_file)
       logger.info("Loader Options : #{@config.inspect}")
     end
-    
-    
-    # Return the find_by operator and the rest of the (row,columns) data e.g
+
+
+    # Return the find_by (where) operator, if specified, otherwise use the heading operator.
+    # i.e where operator embedded in row ,takes precedence over operator in column heading
+    #
+    # Treat rest of the node as the value to use in the where clause e.g
     #   price:0.99
-    # 
+    #
     # Column headings will be used, if the row only contains data e.g
     #   0.99
     #   
@@ -254,31 +264,42 @@ module DataShift
     #
     def get_operator_and_data(inbound_data)
 
-      operator, data = inbound_data.split(Delimiters::name_value_delim)
+      where_operator, data = inbound_data.split(Delimiters::name_value_delim)
+
+      md = @populator.current_method_detail
 
       # Find by operator embedded in row takes precedence over operator in column heading
-      if((data.nil? || data.empty?) && @populator.current_method_detail.find_by_operator)
-        # row contains data only so operator becomes header via method details
-        data = operator
-        operator = @populator.current_method_detail.find_by_operator
+      if((data.nil? || data.empty?) && md.find_by_operator)
+        if((where_operator.nil? || where_operator.empty?))  #colum completely empty - check for defaults
+          if(md.find_by_value)
+            data = md.find_by_value
+          else
+            data = Populator::header_default_data(md.operator)
+          end
+        else
+          data = where_operator
+        end
+
+        # row contains single entry only so take operator from header via method details
+        where_operator = md.find_by_operator
       end
 
-      logger.debug("LoaderBase - get_operator_and_data - [#{operator}] - [#{data}]")
+      logger.debug("LoaderBase - get_operator_and_data - [#{where_operator}] - [#{data}]")
 
-      return operator, data
+      return where_operator, data
     end
-    
+
     # Process a value string from a column.
     # Assigning value(s) to correct association on @load_object.
     # Method detail represents a column from a file and it's correlated AR associations.
     # Value string which may contain multiple values for a collection association.
     #
-    def process(method_detail, value)  
-      
+    def process(method_detail, value)
+
       current_method_detail = method_detail
 
       current_value, current_attribute_hash = @populator.prepare_data(method_detail, value)
-       
+
       # TODO - Move ALL of this into Populator properly
       if(current_method_detail.operator_for(:has_many))
 
@@ -286,7 +307,7 @@ module DataShift
 
           # there are times when we need to save early, for example before assigning to
           # has_and_belongs_to associations which require the load_object has an id for the join table
-        
+
           save_if_new
 
           # A single column can contain multiple associations delimited by special char
@@ -298,24 +319,24 @@ module DataShift
           #   find_all_by_colour( ['red','green','blue'] )
 
           columns.each do |col_str|
-            
+
             find_operator, col_values = get_operator_and_data( col_str )
-                      
+
             raise "Cannot perform DB find by #{find_operator}. Expected format key:value" unless(find_operator && col_values)
-             
+
             find_by_values = col_values.split(Delimiters::multi_value_delim)
-            
-            find_by_values << current_method_detail.find_by_value if(current_method_detail.find_by_value)           
+
+            find_by_values << current_method_detail.find_by_value if(current_method_detail.find_by_value)
 
             found_values = []
 
-              #if(find_by_values.size() == 1)
-               # logger.info("Find or create #{current_method_detail.operator_class} with #{find_operator} = #{find_by_values.inspect}")
-              #  item = current_method_detail.operator_class.where(find_operator => find_by_values.first).first_or_create
-              #else
-              #  logger.info("Find #{current_method_detail.operator_class} with #{find_operator} = values #{find_by_values.inspect}")
-              #  current_method_detail.operator_class.where(find_operator => find_by_values).all
-              #end
+            #if(find_by_values.size() == 1)
+            # logger.info("Find or create #{current_method_detail.operator_class} with #{find_operator} = #{find_by_values.inspect}")
+            #  item = current_method_detail.operator_class.where(find_operator => find_by_values.first).first_or_create
+            #else
+            #  logger.info("Find #{current_method_detail.operator_class} with #{find_operator} = values #{find_by_values.inspect}")
+            #  current_method_detail.operator_class.where(find_operator => find_by_values).all
+            #end
 
             operator_class = current_method_detail.operator_class
 
@@ -331,7 +352,7 @@ module DataShift
             end
 
             logger.info("Scan result #{found_values.inspect}")
-                
+
             unless(find_by_values.size == found_values.size)
               found = found_values.collect {|f| f.send(find_operator) }
               @load_object.errors.add( current_method_detail.operator, "Association with key(s) #{(find_by_values - found).inspect} NOT found")
@@ -340,7 +361,7 @@ module DataShift
             end
 
             logger.info("Assigning #{found_values.inspect} (#{found_values.class})")
-            
+
             # Lookup Assoc's Model done, now add the found value(s) to load model's collection
             @populator.prepare_and_assign(current_method_detail, @load_object, found_values)
           end # END HAS_MANY
@@ -348,39 +369,53 @@ module DataShift
       else
         # Nice n simple straight assignment to a column variable
         #puts "INFO: LOADER BASE processing #{method_detail.name}"
-        @populator.assign(@load_object)
+        @populator.assign(load_object)
       end
     end
-    
-    
+
+
     # Loading failed. Store a failed object and if requested roll back (destroy) the current load object
     # For use case where object saved early but subsequent required columns fail to process
     # so the load object is invalid
-    
+
     def failure( object = @load_object, rollback = false)
       if(object)
         @reporter.add_failed_object(object)
-      
-        object.destroy if(rollback && object.respond_to?('destroy') && !object.new_record?)
-        
-        new_load_object # don't forget to reset the load object 
+
+        if(rollback && object.respond_to?('destroy') && !object.new_record?)
+          klass = object.class
+          object.destroy
+          object = klass.new
+        end
+      end
+    end
+
+    def save_and_report
+      unless(save)
+        failure
+        logger.error "Failed to save row (#{current_row_idx}) - [#{@current_row}]"
+        logger.error load_object.errors.inspect if(load_object)
+      else
+        logger.info("Successfully SAVED Object with ID #{load_object.id} for Row #{@current_row}")
+        @reporter.add_loaded_object(@load_object)
+        @reporter.success_inbound_count += 1
       end
     end
 
     def save
       return unless( @load_object )
-      
+
       puts "DEBUG: SAVING #{@load_object.class} : #{@load_object.inspect}" if(verbose)
       begin
         return @load_object.save
       rescue => e
-        failure
-        puts "Error saving #{@load_object.class} : #{e.inspect}"
-        logger.error e.backtrace
-        raise "Error in save whilst processing column #{@current_method_detail.name}" if(@config[:strict])
+        logger.error( "Save Error : #{e.inspect} on #{@load_object.class}")
+        logger.error(e.backtrace)
       end
-    end 
-    
+
+      false
+    end
+
     # Reset the loader, including database object to be populated, and load counts
     #
     def reset(object = nil)
@@ -388,7 +423,7 @@ module DataShift
       @reporter.reset
     end
 
-    
+
     def new_load_object
       @load_object = @load_object_class.new
       @load_object
@@ -417,7 +452,7 @@ module DataShift
     def missing_mandatory_headers( mandatory_list )
       [ [*mandatory_list] - @headers].flatten
     end
-    
+
     def find_or_new( klass, condition_hash = {} )
       @records[klass] = klass.find(:all, :conditions => condition_hash)
       if @records[klass].any?
@@ -428,14 +463,14 @@ module DataShift
     end
 
     protected
-    
+
     # Take current column data and split into each association
     # Supported Syntax :
     #  assoc_find_name:value | assoc2_find_name:value | etc
     def get_each_assoc
-      @populator.current_value.to_s.split( Delimiters::multi_assoc_delim )
+      current_value = @populator.current_value.to_s.split( Delimiters::multi_assoc_delim )
     end
-      
+
     private
 
     # This method usually called during processing to avoid errors with associations like
@@ -445,14 +480,14 @@ module DataShift
     # TODO smart ordering of columns dynamically ourselves rather than relying on incoming data order
     def save_if_new
       return unless(load_object.new_record?)
-      
-      if(load_object.valid?)  
+
+      if(load_object.valid?)
         save
       else
         raise DataShift::SaveError.new("Cannot Save - Invalid #{load_object.class} Record - #{load_object.errors.full_messages}")
       end
     end
-  
+
   end
 
 end
