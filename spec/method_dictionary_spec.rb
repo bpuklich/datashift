@@ -105,7 +105,7 @@ describe 'Method Dictionary' do
       method_details.col_type.should_not be_nil
       method_details.col_type.name.should == 'value_as_string'
       method_details.col_type.default.should == nil
-      method_details.col_type.sql_type.should include 'varchar(255)'   # db specific, sqlite
+      method_details.col_type.sql_type.should include 'varchar'   # db specific, sqlite
       method_details.col_type.type.should == :string
     end
   end

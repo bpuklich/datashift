@@ -13,18 +13,18 @@
 
 ActiveRecord::Schema.define(version: 20121009161700) do
 
-  create_table "categories", force: true do |t|
+  create_table "categories", force: :cascade do |t|
     t.string   "reference"
     t.datetime "created_at"
     t.datetime "updated_at"
   end
 
-  create_table "categories_projects", id: false, force: true do |t|
+  create_table "categories_projects", id: false, force: :cascade do |t|
     t.integer "category_id"
     t.integer "project_id"
   end
 
-  create_table "digitals", force: true do |t|
+  create_table "digitals", force: :cascade do |t|
     t.integer  "owner_id"
     t.string   "attachment_file_name"
     t.string   "attachment_content_type"
@@ -33,10 +33,10 @@ ActiveRecord::Schema.define(version: 20121009161700) do
     t.datetime "updated_at"
   end
 
-  create_table "empties", force: true do |t|
+  create_table "empties", force: :cascade do |t|
   end
 
-  create_table "loader_releases", force: true do |t|
+  create_table "loader_releases", force: :cascade do |t|
     t.string   "name"
     t.integer  "project_id"
     t.integer  "version_id"
@@ -44,11 +44,11 @@ ActiveRecord::Schema.define(version: 20121009161700) do
     t.datetime "updated_at"
   end
 
-  create_table "long_and_complex_table_linked_to_versions", force: true do |t|
+  create_table "long_and_complex_table_linked_to_versions", force: :cascade do |t|
     t.integer "version_id"
   end
 
-  create_table "milestones", force: true do |t|
+  create_table "milestones", force: :cascade do |t|
     t.string   "name"
     t.datetime "datetime"
     t.decimal  "cost",       precision: 8, scale: 2, default: 0.0
@@ -57,7 +57,7 @@ ActiveRecord::Schema.define(version: 20121009161700) do
     t.datetime "updated_at"
   end
 
-  create_table "owners", force: true do |t|
+  create_table "owners", force: :cascade do |t|
     t.string   "name"
     t.decimal  "budget"
     t.integer  "project_id"
@@ -65,25 +65,25 @@ ActiveRecord::Schema.define(version: 20121009161700) do
     t.datetime "updated_at"
   end
 
-  create_table "projects", force: true do |t|
+  create_table "projects", force: :cascade do |t|
     t.string   "title"
     t.string   "value_as_string"
     t.text     "value_as_text"
-    t.boolean  "value_as_boolean",                          default: false
+    t.boolean  "value_as_boolean",                           default: false
     t.datetime "value_as_datetime"
-    t.integer  "value_as_integer",                          default: 0
-    t.decimal  "value_as_double",   precision: 8, scale: 2, default: 0.0
+    t.integer  "value_as_integer",                           default: 0
+    t.decimal  "value_as_double",   precision: 10, scale: 5, default: 0.0
     t.integer  "user_id"
     t.datetime "created_at"
     t.datetime "updated_at"
   end
 
-  create_table "users", force: true do |t|
+  create_table "users", force: :cascade do |t|
     t.string "title"
     t.string "first_name"
   end
 
-  create_table "versions", force: true do |t|
+  create_table "versions", force: :cascade do |t|
     t.string   "name"
     t.datetime "created_at"
     t.datetime "updated_at"
