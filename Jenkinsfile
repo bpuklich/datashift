@@ -9,19 +9,24 @@ node {
             sh '''#!/bin/bash -l
                 set -e
                 cd spec
+                rvm use ruby-2.2.5@datashift-$BRANCH_NAME
                 gem install bundler --no-document
-                bundle install --deployment
+                bundle install
             '''
         }
         stage('Test') {
             sh '''#!/bin/bash -l
                 set -e
                 cd spec
+                rvm use ruby-2.2.5@datashift-$BRANCH_NAME
                 bundle exec rspec -c .
             '''
         }
         stage('Cleanup') {
             echo 'Cleaning workspace (if successful)'
+            sh '''#!/bin/bash -l
+                rvm --force gemset delete datashift-$BRANCH_NAME
+            '''
             step([$class: 'WsCleanup', deleteDirs: true, patterns: [[pattern: '.git/**', type: 'EXCLUDE']]])
         }
     } catch (e) {
