@@ -8,7 +8,7 @@ node {
         stage('Build') {
             sh '''#!/bin/bash -l
                 set -e
-                cd spec
+                cd .
                 rvm use ruby-2.2.5@datashift-$BRANCH_NAME
                 gem install bundler --no-document
                 bundle install
