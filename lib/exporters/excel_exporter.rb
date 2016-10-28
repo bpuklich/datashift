@@ -1,121 +1,149 @@
-# Copyright:: (c) Autotelik Media Ltd 2011
+# Copyright:: (c) Autotelik Media Ltd 2016
 # Author ::   Tom Statter
-# Date ::     Aug 2011
+# Date ::     Mar 2016
 # License::   MIT
 #
 # Details::   Export a model to Excel '97(-2007) file format.
 #
-# TOD : Can we switch between .xls and XSSF (POI implementation of Excel 2007 OOXML (.xlsx) file format.)
+# TODO: Can we switch between .xls and XSSF (POI implementation of Excel 2007 OOXML (.xlsx) file format.)
 #
 #
 module DataShift
-
-  require 'exporter_base'
-
-  require 'excel'
 
   class ExcelExporter < ExporterBase
 
     include DataShift::Logging
     include DataShift::ColumnPacker
 
-    def initialize(filename)
-      @filename = filename
+    include DataShift::ExcelBase
+
+    # Optional, otherwise  uses the standard collection of Model Methods for supplied klass
+    attr_accessor :data_flow_schema
+
+    def initialize
+      super
+
+      @data_flow_schema = nil
     end
 
     # Create an Excel file from list of ActiveRecord objects
-    def export(export_records, options = {})
+    def export(file_name, export_records, options = {})
+
+      @file_name = file_name
 
       records = [*export_records]
 
-      unless(records && records.size > 0)
-        logger.warn("No objects supplied for export")
+      if(records.nil? || records.empty?)
+        logger.warn('Excel Export - No objects supplied for export - no file written')
         return
       end
 
       first = records[0]
 
-      logger.info("Exporting #{records.size} #{first.class} to Excel")
+      raise(ArgumentError, 'Please supply set of ActiveRecord objects to export') unless first.is_a?(ActiveRecord::Base)
 
-      raise ArgumentError.new('Please supply set of ActiveRecord objects to export') unless(first.is_a?(ActiveRecord::Base))
+      klass = first.class
 
+      excel = start_excel(klass, options)
 
-      raise ArgumentError.new('Please supply array of records to export') unless records.is_a? Array
+      prepare_data_flow_schema(klass)
 
-      excel = Excel.new
+      export_headers(klass)
 
-      if(options[:sheet_name] )
-        excel.create_worksheet( :name => options[:sheet_name] )
-      else
-        excel.create_worksheet( :name => records.first.class.name )
-      end
-
-      excel.ar_to_headers(records)
+      logger.info("Exporting #{records.size} #{klass} to Excel")
 
       excel.ar_to_xls(records)
 
-      excel.write( filename() )
+      logger.info("Writing Excel to file [#{file_name}]")
+
+      excel.write( file_name )
+    end
+
+    def export_headers(klass)
+
+      headers = if(data_flow_schema)
+                  data_flow_schema.sources
+                else
+                  Headers.klass_to_headers(klass)
+                end
+
+      excel.set_headers( headers )
+
+      logger.info("Wrote headers for #{klass} to Excel")
+      headers
+    end
+
+    def prepare_data_flow_schema(klass)
+      @data_flow_schema = DataShift::DataFlowSchema.new
+      @data_flow_schema.prepare_from_klass( klass )
+
+      data_flow_schema
     end
 
     # Create an Excel file from list of ActiveRecord objects, includes relationships
     #
-    #   Options
+    # The Associations/relationships to include are driven by Configuration Options
     #
-    #     with:         Specify which association types to export :with
-    #                   Possible values are : [:assignment, :belongs_to, :has_one, :has_many]
-    #     sheet_name    Else uses Class name
-    #     json:         Export association data in single column in JSON format
+    #   See - lib/exporters/configuration.rb
     #
-    def export_with_associations(klass, records, options = {})
+    def export_with_associations(file_name, klass, records, options = {})
 
-      excel = Excel.new
+      state = DataShift::Configuration.call.with
 
-      if(options[:sheet_name] )
-        excel.create_worksheet( :name => options[:sheet_name] )
-      else
-        excel.create_worksheet( :name => records.first.class.name )
-      end
+      DataShift::Configuration.call.with = :all
 
-      MethodDictionary.find_operators( klass )
+      @file_name = file_name
 
-      MethodDictionary.build_method_details( klass )
+      excel = start_excel(klass, options)
 
-      # For each type belongs has_one, has_many etc find the operators
-      # and create headers, then for each record call those operators
-      operators = options[:with] || MethodDetail::supported_types_enum
+      logger.info("Processing [#{records.size}] #{klass} records to Excel")
 
-      excel.ar_to_headers( records, operators)
+      prepare_data_flow_schema(klass)
 
-      details_mgr = MethodDictionary.method_details_mgrs[klass]
+      export_headers(klass)
+
+      nodes = data_flow_schema.nodes
 
       row = 1
 
       records.each do |obj|
-
         column = 0
 
-        operators.each do |op_type|     # belongs_to, has_one, has_many etc
+        nodes.each do |node|
 
-          operators_for_type = details_mgr.get_list(op_type)
+          logger.info("Send to Excel: #{node.inspect}")
 
-          next if(operators_for_type.nil? || operators_for_type.empty?)
+          model_method = node.model_method
 
-          operators_for_type.each do |md|     # actual associations on obj
-            if(MethodDetail.is_association_type?(op_type))
-              excel[row, column] = record_to_column( obj.send( md.operator ), options )    # pack association into single column
+          logger.info("Send to Excel: #{model_method.pp}")
+
+          begin
+            # pack association instances into single column
+            if model_method.association_type?
+              logger.info("Processing #{model_method.inspect} associations")
+              excel[row, column] = record_to_column( obj.send( model_method.operator ), configuration.json )
             else
-              excel[row, column] = obj.send( md.operator )
+              excel[row, column] = obj.send( model_method.operator )
             end
-            column += 1
+          rescue => x
+            logger.error("Failed to write #{model_method.inspect} to Excel")
+            logger.error(x.inspect)
           end
+
+          column += 1
         end
 
         row += 1
       end
 
-      excel.write( filename() )
+      logger.info("Writing Excel to file [#{file_name}]")
+      excel.write( file_name )
+
+    ensure
+      DataShift::Configuration.call.with = state
 
     end
+
   end # ExcelGenerator
 
 end # DataShift

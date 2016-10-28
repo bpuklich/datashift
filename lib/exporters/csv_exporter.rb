@@ -1,13 +1,10 @@
-# Copyright:: (c) Autotelik Media Ltd 2011
+# Copyright:: (c) Autotelik Media Ltd 2015
 # Author ::   Tom Statter
-# Date ::     Aug 2011
 # License::   MIT
 #
 # Details::   Export a model to CSV
 #
 #
-require 'exporter_base'
-require 'csv_file'
 
 module DataShift
 
@@ -16,87 +13,97 @@ module DataShift
     include DataShift::Logging
     include DataShift::ColumnPacker
 
-    def initialize(filename)
-      super(filename)
+    def initialize
+      super
+
+      @csv_delimiter = ','
     end
 
     # Create CSV file from set of ActiveRecord objects
-    # Options :
-    # => :filename
-    # => :text_delim => Char to use to delim columns, useful when data contain embedded ','
-    # => ::methods => List of methods to additionally call on each record
     #
-    def export(export_records, options = {})
+    # Options :
+    #
+    # :csv_delim => Char to use to delim columns, useful when data contain embedded ','
+    #
+    def export(file_name, export_records, options = {})
+
+      @file_name = file_name
 
       records = [*export_records]
 
-      unless(records && records.size > 0)
-        logger.warn("No objects supplied for export")
+      unless records && !records.empty?
+        logger.warn('No objects supplied for export')
         return
       end
 
       first = records[0]
 
-      raise ArgumentError.new('Please supply set of ActiveRecord objects to export') unless(first.is_a?(ActiveRecord::Base))
+      raise ArgumentError.new('Please supply set of ActiveRecord objects to export') unless first.is_a?(ActiveRecord::Base)
 
-      Delimiters.text_delim = options[:text_delim] if(options[:text_delim])
+      @csv_delimiter = options[:csv_delim] if options[:csv_delim]
 
-      CSV.open( (options[:filename] || filename), "w" ) do |csv|
+      headers = Headers.klass_to_headers(first.class)
 
-        csv.ar_to_headers( records )
+      logger.debug "Writing out CSV Export. Columns delimited by [#{csv_delimiter}]"
+
+      remove_list = DataShift::Transformation::Remove.new.remove_list
+
+      CSV.open(file_name, 'w', col_sep: csv_delimiter ) do |csv|
+        csv << headers.sources
 
         records.each do |r|
-          next unless(r.is_a?(ActiveRecord::Base))
-          csv.ar_to_csv(r, options)
+          next unless r.is_a?(ActiveRecord::Base)
+          csv.ar_to_row(r, remove_list)
         end
       end
+
+      logger.info "CSV export completed for #{records.size} records"
     end
 
-    # Create an Excel file from list of ActiveRecord objects
-    # Specify which associations to export via :with or :exclude
-    # Possible values are : [:assignment, :belongs_to, :has_one, :has_many]
+    # Create CSV file from list of ActiveRecord objects
     #
-    def export_with_associations(klass, records, options = {})
+    # Options :
+    #
+    # :csv_delim => Char to use to delim columns, useful when data contain embedded ','
+    #
+    def export_with_associations(file_name, klass, records, options = {})
 
-      Delimiters.text_delim = options[:text_delim] if(options[:text_delim])
+      state = DataShift::Configuration.call.with
 
-      MethodDictionary.find_operators( klass )
+      DataShift::Configuration.call.with = :all
 
-      MethodDictionary.build_method_details( klass )
+      @file_name = file_name
 
-      # For each type belongs has_one, has_many etc find the operators
-      # and create headers, then for each record call those operators
-      operators = options[:with] || MethodDetail::supported_types_enum
+      @csv_delimiter = options[:csv_delim] if(options[:csv_delim])
 
-      CSV.open( (options[:filename] || filename), "w" ) do |csv|
+      headers = Headers.klass_to_headers(klass)
 
-        csv.ar_to_headers( records, operators)
+      schema = DataFlowSchema.new
 
-        details_mgr = MethodDictionary.method_details_mgrs[klass]
+      model_methods = schema.klass_to_model_methods( klass )
 
-        row = []
+      logger.debug "Writing out CSV Export for #{klass} with Associations. Columns delimited by [#{csv_delimiter}]"
 
-        records.each do |obj|
+      CSV.open(file_name, 'w', col_sep: csv_delimiter ) do |csv|
+        csv << headers.sources
 
-          operators.each do |op_type|
+        records.each do |record|
+          row = []
 
-            operators_for_type = details_mgr.get_list(op_type)
-
-            next if(operators_for_type.nil? || operators_for_type.empty?)
-
-            operators_for_type.each do |md|
-              if(MethodDetail.is_association_type?(op_type))
-                row << record_to_column( obj.send( md.operator ))    # pack association into single column
-              else
-                row << escape_for_csv( obj.send( md.operator ) )
-              end
-            end
+          model_methods.each do |model_method|
+            row << if model_method.association_type?
+                     record_to_column( record.send(model_method.operator) )
+                   else
+                     escape_for_csv( record.send(model_method.operator) )
+                   end
           end
-
-          csv << row # next record
+          csv.add_row(row)
         end
       end
 
-    end
+    ensure
+      DataShift::Configuration.call.with = state
+    end # end write file
+
   end
 end

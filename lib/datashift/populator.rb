@@ -4,439 +4,467 @@
 # License::   MIT
 #
 # Details::   The default Populator class for assigning data to models
-#             
+#
 #             Provides individual population methods on an AR model.
 #
 #             Enables users to assign values to AR object, without knowing much about that receiving object.
 #
-require 'to_b'
-require 'logging'
-
 module DataShift
 
-  Struct.new("Substitution", :pattern, :replacement)
-
   class Populator
-    
+
     include DataShift::Logging
+    extend DataShift::Logging
+
+    include DataShift::Delimiters
+    extend DataShift::Delimiters
 
     def self.insistent_method_list
-      @insistent_method_list ||= [:to_s, :to_i, :to_f, :to_b]
+      @insistent_method_list ||= [:to_s, :downcase, :to_i, :to_f, :to_b]
     end
- 
+
     # When looking up an association, when no field provided, try each of these in turn till a match
     # i.e find_by_name, find_by_title, find_by_id
     def self.insistent_find_by_list
       @insistent_find_by_list ||= [:name, :title, :id]
     end
 
+    attr_reader :value, :attribute_hash
 
-    # Default data embedded in column headings - so effectively apply globally
-    # to teh whole column - hence class methods
-    def self.set_header_default_data(operator, data )
-      header_default_data[operator] = data
+    attr_accessor :previous_value, :original_data
+
+    def initialize(transformer = nil)
+      # reset
+      @transformer = transformer || Transformation.factory
+
+      @attribute_hash = {}
     end
 
-    def self.header_default_data
-      @header_default_data ||= {}
+    # Main client hooks :
+
+    # Prepare the data to be populated, then assign to the Db record
+
+    def prepare_and_assign(context, record, data)
+      prepare_and_assign_method_binding(context.method_binding, record, data)
     end
 
+    # This is the most pertinent hook for derived Processors, where you can provide custom
+    # population messages for specific Method bindings
 
-    attr_reader :current_value, :original_value_before_override
-    attr_reader :current_col_type
-    
-    attr_reader :current_attribute_hash
-    attr_reader :current_method_detail
-    
-    def initialize   
-      @current_value = nil
-      @current_method_detail = nil
-      @original_value_before_override = nil
-      @current_attribute_hash = {}
+    def prepare_and_assign_method_binding(method_binding, record, data)
+      prepare_data(method_binding, data)
 
+      assign(method_binding, record)
     end
-    
-    # Convert DSL string forms into a hash
-    # e.g
-    # 
-    #  "{:name => 'autechre'}" =>   Hash['name'] = autechre'
-    #  "{:cost_price => '13.45', :price => 23,  :sale_price => 4.23 }"
-    
-    def self.string_to_hash( str )
-      h = {}
-      str.gsub(/[{}:]/,'').split(', ').map do |e| 
-        k,v = e.split('=>')
-        
-        k.strip!
-        v.strip!
-        
-        if( v.match(/['"]/) )
-          h[k] = v.gsub(/["']/, '')
-        elsif( v.match(/^\d+$|^\d*\.\d+$|^\.\d+$/) )
-          h[k] = v.to_f
-        else
-          h[k] = v
-        end
-        h
-      end
-   
-      h
+
+    def reset
+      @value = nil
+      @previous_value = nil
+      @original_data = nil
+      @attribute_hash = {}
     end
-    
-    # Set member variables to hold details, value and optional attributes,
-    # to be set on the 'value' once created
-    # 
+
+    def value?
+      !value.nil?
+    end
+
+    def self.attribute_hash_const_regexp
+      @attribute_hash_const_regexp ||= Regexp.new( attribute_list_start + '.*' + attribute_list_end)
+    end
+
     # Check supplied value, validate it, and if required :
     #   set to provided default value
-    #   prepend any provided prefixes 
+    #   prepend any provided prefixes
     #   add any provided postfixes
-    def prepare_data(method_detail, value)
+    #
+    # Rtns : tuple of [:value, :attribute_hash]
+    #
+    def prepare_data(method_binding, data)
 
-      raise NilDataSuppliedError.new("No method detail supplied for prepare_data") unless(method_detail)
-     
+      connection_adapter_column = method_binding.model_method.connection_adapter_column
+
+
+      raise NilDataSuppliedError, 'No method_binding supplied for prepare_data' unless method_binding
+
+      @original_data = data
+
       begin
-        @prepare_data_const_regexp ||= Regexp.new( Delimiters::attribute_list_start + ".*" + Delimiters::attribute_list_end)
 
-        if( value.is_a? ActiveRecord::Relation ) # Rails 4 - query no longer returns an array
-          @current_value = value.to_a
-        elsif( value.class.ancestors.include?(ActiveRecord::Base) || value.is_a?(Array))
-          @current_value = value
+        if(data.is_a?(ActiveRecord::Relation)) # Rails 4 - query no longer returns an array
+          @value = data.to_a
+
+        elsif(data.class.ancestors.include?(ActiveRecord::Base) || data.is_a?(Array))
+          @value = data
+
+        elsif(!DataShift::Guards.jruby? &&
+          (data.is_a?(Spreadsheet::Formula) || data.class.ancestors.include?(Spreadsheet::Formula)) )
+
+          @value = data.value  # TOFIX jruby/apache poi equivalent ?
+
+        elsif(connection_adapter_column && connection_adapter_column.cast_type.is_a?(ActiveRecord::Type::Boolean))
+
+          # DEPRECATION WARNING: You attempted to assign a value which is not explicitly `true` or `false` ("0.00")
+          # to a boolean column. Currently this value casts to `false`.
+          # This will change to match Ruby's semantics, and will cast to `true` in Rails 5.
+          # If you would like to maintain the current behavior, you should explicitly handle the values you would like cast to `false`.
+
+          @value = if(data.in? [true, false])
+                     data
+                   else
+                     (data.to_s.downcase == "true" || data.to_s.to_i == 1) ? true : false
+                   end
         else
-          @current_value = value.to_s
-          
-          attribute_hash = @current_value.slice!(@prepare_data_const_regexp)
-          
-          if(attribute_hash)  
-            #@current_value.chop!    # the slice seems to add an extra space/eol
-            @current_attribute_hash = Populator::string_to_hash( attribute_hash )
-            logger.info "Populator for #{@current_value} has attributes #{@current_attribute_hash.inspect}"
+          @value = data.to_s
+
+          @attribute_hash = @value.slice!( Populator.attribute_hash_const_regexp )
+
+          if attribute_hash && !attribute_hash.empty?
+            @attribute_hash = Populator.string_to_hash( attribute_hash )
+            logger.info "Populator found attribute hash :[#{attribute_hash.inspect}]"
+          else
+            @attribute_hash = {}
           end
         end
-      
-        @current_attribute_hash ||= {}
-       
-        @current_method_detail = method_detail
 
-        @current_col_type = @current_method_detail.col_type
-      
-        operator = method_detail.operator
-
-        if(has_override?(operator))
-          override_value(operator)      # takes precedence over anything else
-        else
-          # if no value check for a defaults from config, headers
-          if(default_value(operator))
-            @current_value = default_value(operator)
-          elsif(Populator::header_default_data[operator])
-            @current_value = Populator::header_default_data[operator].to_s
-          elsif(Populator::header_default_data[operator])
-            @current_value = Populator::header_default_data[operator].to_s
-          elsif(method_detail.find_by_value)
-            @current_value = method_detail.find_by_value
-          end if(value.nil? || value.to_s.empty?)
-        end
-
-        substitute( operator )
-
-        @current_value = "#{prefix(operator)}#{@current_value}" if(prefix(operator))
-        @current_value = "#{@current_value}#{postfix(operator)}" if(postfix(operator))
+        run_transforms(method_binding)
 
       rescue => e
-        logger.error("populator failed to prepare data supplied for operator #{method_detail.operator}")
-        logger.error("populator stacktrace: #{e.backtrace.join('\\n')}")
-        raise DataProcessingError.new("opulator failed to prepare data #{value} for operator #{method_detail.operator}")
+        logger.error(e.message)
+        logger.error("Populator stacktrace: #{e.backtrace.first}")
+        raise DataProcessingError, "Populator failed to prepare data [#{value}] for #{method_binding.pp}"
       end
-      
-      return @current_value, @current_attribute_hash
+
+      [value, attribute_hash]
     end
 
-    # Main client hook
+    def assign(method_binding, record)
 
-    def prepare_and_assign(method_detail, record, value)
+      model_method = method_binding.model_method
 
-      prepare_data(method_detail, value) 
-       
-      assign(record)
-    end
-    
-    def assign(record)
+      operator = model_method.operator
 
-      raise NilDataSuppliedError.new("No method detail - cannot assign data") unless(current_method_detail)
-       
-      operator = current_method_detail.operator
+      klass = model_method.klass
 
-      logger.debug("Populator assign - [#{current_value}] via #{current_method_detail.operator} (#{current_method_detail.operator_type})")
-              
-      if( current_method_detail.operator_for(:belongs_to) )
- 
-        insistent_belongs_to(current_method_detail, record, current_value)
+      if model_method.operator_for(:belongs_to)
+        insistent_belongs_to(method_binding, record, value)
+      elsif  model_method.operator_for(:has_many)
+        assign_has_many(method_binding, record)
+      elsif  model_method.operator_for(:has_one)
 
-      elsif( current_method_detail.operator_for(:has_many) )
-
-        # The include? check is best I can come up with right now .. to handle module/namespaces
-        # TODO - can we determine the real class type of an association
-        # e.g given a association taxons, which operator.classify gives us Taxon, but actually it's Spree::Taxon
-        # so how do we get from 'taxons' to Spree::Taxons ? .. check if further info in reflect_on_all_associations
-
-        begin #if(current_value.is_a?(Array) || current_value.class.name.include?(operator.classify))
-          record.send(operator) << current_value
-        rescue => e
-          logger.error e.inspect
-          logger.error "Cannot assign #{current_value.inspect} (#{current_value.class}) to has_many association [#{operator}] "
-        end
-
-      elsif( current_method_detail.operator_for(:has_one) )
-
-        #puts "DEBUG : HAS_MANY :  #{@name} : #{operator}(#{operator_class}) - Lookup #{@current_value} in DB"
-        if(current_value.is_a?(current_method_detail.operator_class))
-          record.send(operator + '=', current_value)
+        if value.is_a?(model_method.klass)
+          record.send(operator + '=', value)
         else
-          logger.error("ERROR #{current_value.class} - Not expected type for has_one #{operator} - cannot assign")
-          # TODO -  Not expected type - maybe try to look it up somehow ?"
+          logger.error("Cannot assign value [#{value.inspect}]")
+          logger.error("Value was Type (#{value.class}) - Required Type for has_one #{operator} is [#{klass}]")
         end
 
-      elsif( current_method_detail.operator_for(:assignment) && current_col_type)
-        # 'type_cast' was changed to 'type_cast_from_database'
-        if Rails::VERSION::STRING < '4.2.0'
-          logger.debug("Assign #{current_value} => [#{operator}] (CAST 2 TYPE  #{current_col_type.type_cast( current_value ).inspect})")
-          record.send( operator + '=' , current_method_detail.col_type.type_cast( current_value ) )
+      elsif  model_method.operator_for(:assignment)
+
+        if model_method.connection_adapter_column
+
+          return if check_process_enum(record, model_method )  # TOFIX .. enum section probably belongs in prepare_data
+
+          assignment(record, value, model_method)
+
         else
-          logger.debug("Assign #{current_value} => [#{operator}] (CAST 2 TYPE  #{current_col_type.type_cast_from_database( current_value ).inspect})")
-          record.send( operator + '=' , current_method_detail.col_type.type_cast_from_database( current_value ) )
+          logger.debug("Brute force assignment of value  #{value} => [#{operator}]")
+          # brute force case for assignments without a column type (which enables us to do correct type_cast)
+          # so in this case, attempt straightforward assignment then if that fails, basic ops such as to_s, to_i, to_f etc
+          insistent_assignment(record, value, operator)
         end
 
-      elsif( current_method_detail.operator_for(:assignment) )
-        logger.debug("Brute force assignment of value  #{current_value} => [#{operator}]")
-        # brute force case for assignments without a column type (which enables us to do correct type_cast)
-        # so in this case, attempt straightforward assignment then if that fails, basic ops such as to_s, to_i, to_f etc
-        insistent_assignment(record, current_value, operator)
+      elsif model_method.operator_for(:method)
+        logger.debug("Method delegation assignment of value  #{value} => [#{operator}]")
+        insistent_assignment(record, value, operator)
+
       else
-        puts "WARNING: No assignment possible on #{record.inspect} using [#{operator}]"
-        logger.error("WARNING: No assignment possible on #{record.inspect} using [#{operator}]")
+        logger.warn("Cannot assign via [#{operator}] to #{record.inspect} ")
       end
+
     end
-    
-    def insistent_assignment(record, value, operator)
-      
-      op = operator + '=' unless(operator.include?('='))
+
+    def assignment(record, value, model_method)
+
+      operator = model_method.operator
+      connection_adapter_column = model_method.connection_adapter_column
 
       begin
-        record.send(op, value)
-      rescue => e
+        if(connection_adapter_column.respond_to? :type_cast)
+          logger.debug("Assignment via [#{operator}] to [#{value}] (CAST TYPE [#{model_method.connection_adapter_column.type_cast(value).inspect}])")
 
-        Populator::insistent_method_list.each do |f|
-          begin
-            record.send(op, value.send( f) )
-            break
-          rescue => e
-            if f == Populator::insistent_method_list.last
-              logger.error(e.inspect)
-              logger.error("Failed to assign [#{value}] via operator #{operator}")
-              raise "Failed to assign [#{value}] to #{operator}" unless value.nil?
+          record.send( operator + '=', model_method.connection_adapter_column.type_cast( value ) )
+
+        else
+          logger.debug("Assignment via [#{operator}] to [#{value}] (NO CAST)")
+
+          # Good guide on diff ways to set attributes
+          #   http://www.davidverhasselt.com/set-attributes-in-activerecord/
+          if(DataShift::Configuration.call.update_and_validate)
+            record.update( operator => value)
+          else
+            record.send( operator + '=', value)
+          end
+        end
+      rescue => e
+        logger.error e.backtrace.first
+        logger.error("Assignment failed #{e.inspect}")
+        raise DataProcessingError, "Failed to set [#{value}] via [#{operator}] due to ERROR : #{e.message}"
+      end
+    end
+
+    def insistent_assignment(record, value, operator)
+
+      op = operator + '=' unless operator.include?('=')
+
+      # TODO: - fix this crap - perhaps recursion ??
+      begin
+        record.send(op, value)
+      rescue
+        begin
+          op = operator.downcase
+          op += '=' unless operator.include?('=')
+
+          record.send(op, value)
+
+        rescue => e
+
+          Populator.insistent_method_list.each do |f|
+            begin
+              record.send(op, value.send(f) )
+              break
+            rescue => e
+              if f == Populator.insistent_method_list.last
+                logger.error(e.inspect)
+                logger.error("Failed to assign [#{value}] via operator #{operator}")
+                raise DataProcessingError, "Failed to assign [#{value}] to #{operator}" unless value.nil?
+              end
             end
           end
         end
       end
     end
-    
+
     # Attempt to find the associated object via id, name, title ....
-    def insistent_belongs_to(method_detail, record, value )
+    def insistent_belongs_to(method_binding, record, value )
 
-      operator = method_detail.operator
+      operator = method_binding.operator
 
-      if( value.class == method_detail.operator_class)
+      klass = method_binding.model_method.operator_class
+
+      if value.class == klass
         logger.info("Populator assigning #{value} to belongs_to association #{operator}")
         record.send(operator) << value
       else
 
-        # TODO - DRY all this
-        if(method_detail.find_by_operator)
+        unless method_binding.klass.respond_to?('where')
+          raise CouldNotAssignAssociation, "Populator failed to assign [#{value}] to belongs_to [#{operator}]"
+        end
 
-          item = method_detail.operator_class.where(method_detail.find_by_operator => value).first_or_create
+        # Try the default field names
 
-          if(item)
+        # TODO: - add find by operators from headers or configuration to  insistent_find_by_list
+        Populator.insistent_find_by_list.each do |find_by|
+          begin
+
+            item = klass.where(find_by => value).first_or_create
+
+            next unless item
+
             logger.info("Populator assigning #{item.inspect} to belongs_to association #{operator}")
             record.send(operator + '=', item)
-          else
-            logger.error("Could not find or create [#{value}] for belongs_to association [#{operator}]")
-            raise CouldNotAssignAssociation.new "Populator failed to assign [#{value}] to belongs_to association [#{operator}]"
-          end
-
-        else
-          #try the default field names
-          Populator::insistent_find_by_list.each do |x|
-            begin
-
-              next unless method_detail.operator_class.respond_to?("where")
-
-              item = method_detail.operator_class.where(x => value).first_or_create
-
-              if(item)
-                logger.info("Populator assigning #{item.inspect} to belongs_to association #{operator}")
-                record.send(operator + '=', item)
-                break
-              end
-            rescue => e
-              logger.error(e.inspect)
-              logger.error("Failed attempting to find belongs_to for #{method_detail.pp}")
-              if(x == Populator::insistent_method_list.last)
-                raise CouldNotAssignAssociation.new "Populator failed to assign [#{value}] to belongs_to association [#{operator}]" unless value.nil?
-              end
-            end
-          end
-        end
-        
-      end
-    end
-    
-    def assignment( operator, record, value )
-
-      op = operator + '=' unless(operator.include?('='))
-    
-      begin
-        record.send(op, value)
-      rescue => e
-        Populator::insistent_method_list.each do |f|
-          begin
-            record.send(op, value.send( f) )
             break
+
           rescue => e
-            if f == Populator::insistent_method_list.last
-              puts  "I'm sorry I have failed to assign [#{value}] to #{operator}"
-              raise "I'm sorry I have failed to assign [#{value}] to #{operator}" unless value.nil?
+            logger.error(e.inspect)
+            logger.error("Failed attempting to find belongs_to for #{method_binding.pp}")
+            if find_by == Populator.insistent_method_list.last
+              raise CouldNotAssignAssociation,
+                    "Populator failed to assign [#{value}] to belongs_to association [#{operator}]" unless value.nil?
             end
           end
         end
+
       end
     end
-   
-    
-    # Default values and over rides can be provided in Ruby/YAML ???? config file.
-    # 
-    #  Format :
-    #     
-    #    Load Class:    (e.g Spree:Product)
-    #     datashift_defaults:     
-    #       value_as_string: "Default Project Value"  
-    #       category: reference:category_002    
-    #     
-    #     datashift_overrides:    
-    #       value_as_double: 99.23546
+
+    def check_process_enum(record, model_method)
+
+      klass = model_method.klass
+      operator = model_method.operator
+
+      if klass.respond_to?(operator.pluralize)
+
+        enums = klass.send(operator.pluralize)
+
+        logger.debug("Checking for enum - #{enums.inspect} - #{value.parameterize.underscore}" )
+
+        if enums.is_a?(Hash) && enums.keys.include?(value.parameterize.underscore)
+          # ENUM
+          logger.debug("[#{operator}] Appears to be an ENUM - setting to [#{value}])")
+
+          # TODO: - now we know this column is an enum set operator type to :enum to save this check in future
+          # probably requires changes above to just assign enum directly without this check
+          model_method.operator_for(:assignment)
+
+          record.send( operator + '=', value.parameterize.underscore)
+          return true
+        end
+      end
+    end
+
+    def self.string_to_hash( str )
+      str.to_hash_object
+    end
+
+    private
+
+    attr_writer :value, :attribute_hash
+
+    # TOFIX - Does not belong in this class
+    def run_transforms(method_binding)
+      default( method_binding ) if value.blank?
+
+      override( method_binding )
+
+      substitute( method_binding )
+
+      prefix( method_binding )
+
+      postfix( method_binding )
+
+      # TODO: - enable clients to register their own transformation methods and call them here
+    end
+
+    # A single column can contain multiple lookup key:value definitions.
+    # These are delimited by special char defined in Delimiters
     #
-    def configure_from(load_object_class, yaml_file)
+    # For example:
+    #
+    #   size:large | colour:red,green,blue |
+    #
+    def split_multi_assoc_value
+      value.to_s.split( multi_assoc_delim )
+    end
 
-      data = YAML::load( ERB.new( IO.read(yaml_file) ).result )
+    def assign_has_many(method_binding, load_object)
 
-      # TODO - MOVE DEFAULTS TO OWN MODULE
-      
-      logger.info("Setting Populator defaults: #{data.inspect}")
-      
-      if(data[load_object_class.name])
+      # there are times when we need to save early, for example before assigning to
+      # has_and_belongs_to associations which require the load_object has an id for the join table
 
-        deflts = data[load_object_class.name]['datashift_defaults']
-        default_values.merge!(deflts) if deflts
+      load_object.save_if_new
 
-        logger.info("Set Populator default_values: #{default_values.inspect}")
-        
-        ovrides = data[load_object_class.name]['datashift_overrides']
-        override_values.merge!(ovrides) if ovrides
-        logger.info("Set Populator overrides: #{override_values.inspect}")
+      collection = []
+      columns = []
 
-        subs = data[load_object_class.name]['datashift_substitutions']
+      if value.is_a?(Array)
 
-        subs.each do |o, sub|
-          # TODO support single array as well as multiple [[..,..], [....]]
-          sub.each { |tuple| set_substitution(o, tuple) }
-        end if(subs)
+        value.each do |record|
+          if record.class.ancestors.include?(ActiveRecord::Base)
+            collection << record
+          else
+            columns << record
+          end
+        end
 
+      else
+        # A single column can contain multiple lookup key:value definitions, delimited by special char
+        # size:large | colour:red,green,blue => [where size: 'large'], [where colour: IN ['red,green,blue']
+        columns = split_multi_assoc_value
       end
 
+      operator = method_binding.operator
+
+      columns.each do |col_str|
+        # split into usable parts ; size:large or colour:red,green,blue
+        field, find_by_values = Querying.where_field_and_values(method_binding, col_str )
+
+        raise "Cannot perform DB find by #{field}. Expected format key:value" unless field && find_by_values
+
+        found_values = []
+
+        # we are looking up an association so need the Class of the Association
+        klass = method_binding.model_method.operator_class
+
+        raise CouldNotDeriveAssociationClass,
+              "Failed to find class for has_many Association : #{method_binding.pp}" unless klass
+
+        logger.info("Running where clause on #{klass} : [#{field} IN #{find_by_values.inspect}]")
+
+        find_by_values.each do |v|
+          begin
+            found_values << klass.where(field => v).first_or_create
+          rescue => e
+            logger.error(e.inspect)
+            logger.error("Failed to find or create #{klass} where #{field} => #{v}")
+            # TODO: some way to define if this is a fatal error or not ?
+          end
+        end
+
+        logger.info("Scan result #{found_values.inspect}")
+
+        unless find_by_values.size == found_values.size
+          found = found_values.collect { |f| f.send(field) }
+          load_object.errors.add( operator, "Association with key(s) #{(find_by_values - found).inspect} NOT found")
+          logger.error "Association [#{operator}] with key(s) #{(find_by_values - found).inspect} NOT found - Not added."
+          next if found_values.empty?
+        end
+
+        logger.info("Assigning to has_many [#{operator}] : #{found_values.inspect} (#{found_values.class})")
+
+        begin
+          load_object.send(operator) << found_values
+        rescue => e
+          logger.error e.inspect
+          logger.error "Cannot assign #{found_values.inspect} to has_many [#{operator}] "
+        end
+
+        logger.info("Assignment to has_many [#{operator}] COMPLETE)")
+      end # END HAS_MANY
     end
 
-    # Set a default value to be used to populate Model.operator
-    # Generally defaults will be used when no value supplied.
-    def set_substitution(operator, value )
-      substitutions[operator] ||= []
+    # Transformations
 
-      substitutions[operator] << Struct::Substitution.new(value[0], value[1])
-    end
+    def default( method_binding )
+      default = Transformation.factory.default(method_binding)
 
-    def substitutions
-      @substitutions ||= {}
-    end
+      return unless default
 
-    def substitute( operator )
-      subs = substitutions[operator] || {}
-
-      subs.each do |s|
-        @original_value_before_override = @current_value
-        @current_value = @original_value_before_override.gsub(s.pattern.to_s, s.replacement.to_s)
-      end
+      @previous_value = value
+      @value = default
     end
 
+    # Checks Transformation for a substitution for column defined in method_binding
+    def substitute( method_binding )
+      sub = Transformation.factory.substitution(method_binding)
 
-    # Set a value to be used to populate Model.operator
-    # Generally over-rides will be used regardless of what value caller supplied.
-    def set_override_value( operator, value )
-      override_values[operator] = value
-    end
-    
-    def override_values
-      @override_values ||= {}
-    end
-    
-    def override_value( operator )
-      if(override_values[operator])
-        @original_value_before_override = @current_value
-      
-        @current_value = @override_values[operator]
-      end
+      return unless sub
+      @previous_value = value
+      @value = previous_value.gsub(sub.pattern.to_s, sub.replacement.to_s)
     end
 
+    def override( method_binding )
+      override = Transformation.factory.override(method_binding)
 
-    def has_override?( operator )
-        return override_values.has_key?(operator)
-    end
-
-    # Set a default value to be used to populate Model.operator
-    # Generally defaults will be used when no value supplied.
-    def set_default_value(operator, value )
-      default_values[operator] = value
-    end
-    
-    def default_values
-      @default_values ||= {}
-    end
-    
-    # Return the default value for supplied operator
-    def default_value(operator)
-      default_values[operator]
+      return unless override
+      @previous_value = value
+      @value = override
     end
 
-    def set_prefix( operator, value )
-      prefixes[operator] = value
+    def prefix( method_binding )
+      prefix = Transformation.factory.prefix(method_binding)
+
+      return unless prefix
+      @previous_value = value
+      @value = prefix + @value
     end
 
-    def prefix(operator)
-      prefixes[operator]
-    end
+    def postfix( method_binding )
+      postfix = Transformation.factory.postfix(method_binding)
 
-    def prefixes
-      @prefixes ||= {}
-    end
-    
-    def set_postfix(operator, value )
-      postfixes[operator] = value
-    end
-
-    def postfix(operator)
-      postfixes[operator]
-    end
-    
-    def postfixes
-      @postfixes ||= {}
+      return unless postfix
+      @previous_value = value
+      @value += postfix
     end
 
   end
-  
 end

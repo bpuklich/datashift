@@ -11,6 +11,8 @@ spec/rails_sandbox
 coverage
 coverage.data
 
+.byebug_history
+
 *.gem
 .~lock.*
 *~
@@ -23,16 +25,18 @@ logs
 logs/**
 public
 public/**
+private/digitals
 MissingAttachmentRecords
 MissingAttachmentRecords/*
 spec/logs
+spec/logs/**
 spec/fixtures/results
 spec/private
 /private
+spec/dummy
 
 nbproject
 Thumbs.db
-
 
 # rdoc generated
 rdoc

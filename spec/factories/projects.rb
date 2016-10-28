@@ -1,15 +1,10 @@
 
 FactoryGirl.define do
 
-  factory :milestone do
-    sequence(:name) { |n| "milestone #{n}" }
-    cost 100
-    datetime Time.new
-    project
-  end
-
   factory :project do
-    title 'project 1'
+
+    sequence(:title) { |n| "Title #{n}" }
+
     value_as_text  "some text\n<storing>nonsense</storing>"
     value_as_string "this is a string"
     value_as_boolean true
@@ -17,7 +12,9 @@ FactoryGirl.define do
     value_as_datetime Time.now
     value_as_integer 23
 
-    factory :project_user do
+    association :user, factory: :user
+
+    factory :project_with_user do
       user
       owner
 
@@ -34,10 +31,11 @@ FactoryGirl.define do
         # attributes; `create_list`'s second argument is the number of records
         # to create and we make sure the project is associated properly to the milestone
         after(:create) do |project, evaluator|
-          create_list(:milestone, evaluator.milestones_count, project: project)
+          create_list(:milestone_with_project, evaluator.milestones_count, project: project)
         end
       end
     end
 
   end
+
 end

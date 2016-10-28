@@ -1,0 +1,168 @@
+AllCops:
+  TargetRubyVersion: 2.2
+  Exclude:
+    - 'spec/**/*'
+    - 'spec/private/**/*'
+    - 'spec/dummy/**/*'
+    - 'spec/factories/*.rb'
+    - 'spec/fixtures/**/*'
+    - 'fixtures/**/*'
+    - 'MissingAttachmentRecords/**/*'
+    # Rakefile is generated when Rails is initialised and therefore should be
+    # left as is
+    - 'Rakefile'
+    # spec_helper is generated when rspec is initialised and therefore should be
+    # left as is
+    - 'spec/spec_helper.rb'
+    - 'spec/dummy/**/*'
+
+Style/SpaceInsideParens:
+    Enabled: false
+
+# Looks ugly having your first method directly after the module/class declaration
+Style/EmptyLinesAroundModuleBody:
+    Enabled: false
+Style/EmptyLinesAroundClassBody:
+    Enabled: false
+Style/EmptyLinesAroundMethodBody:
+    Enabled: false
+Style/EmptyLinesAroundBlockBody:
+    Enabled: false
+
+NumericLiterals:
+  Description: >-
+    Add underscores to large numeric literals to improve their
+    readability.
+  Enabled: false
+
+# Rubymine disagrees and not sure how to fix Rubymine indentation right now
+CaseIndentation:
+    Description: Indentation of when in a case/when/[else/]end.
+    Enabled: false
+
+ClassLength:
+  Description: 'Avoid classes longer than 100 lines of code.'
+  Enabled: false
+
+# As a web app, as long as the team commit to using well named classes for
+# controllers, models etc it should not be necessary to add top-level class
+# documentation.
+Documentation:
+  Enabled: false
+
+# We shouldn't be committing code with debug statements left in (e.g. byebug or save_and_open_page),
+# we don't understand the GDS rationale for disabling this check
+Debugger:
+  Enabled: true
+
+LineLength:
+  Description: Limit lines to 140 characters.
+  Enabled: true
+  Max: 140
+
+Loop:
+  Description: >-
+      Use Kernel#loop with break rather than begin/end/until or
+      begin/end/while for post-loop tests.
+  Enabled: false
+
+MethodCalledOnDoEndBlock:
+  Exclude:
+    - spec/**/*_spec.rb
+
+
+Metrics/BlockNesting:
+  Description: 'Avoid excessive block nesting'
+  Enabled: false
+
+Metrics/LineLength:
+  Exclude:
+    - spec/features/*_spec.rb
+    - spec/factories/*.rb
+    - spec/routing/**/*.rb
+
+# Specs can get large and with good reason, no benefit splitting them up
+Metrics/ModuleLength:
+  Exclude:
+    - spec/**/*_spec.rb
+
+# The default size seems very restrictive bumping to something more usable
+Metrics/ModuleLength:
+  Max: 500
+
+Metrics/CyclomaticComplexity:
+  Max: 20
+
+Metrics/MethodLength:
+  Description: 'Avoid methods longer than 10 lines of code.'
+  Enabled: false
+  Max: 30
+
+Metrics/AbcSize:
+  # The ABC size is a calculated magnitude, so this number can be a Fixnum or
+  # a Float.
+  Max: 60
+
+Metrics/PerceivedComplexity:
+  Max: 15
+
+RaiseArgs:
+  Description: 'Checks the arguments passed to raise/fail.'
+  Enabled: true
+
+Style/BlockComments:
+  Description: 'Do not use block comments.'
+  Enabled: false
+
+# Turn these off as can totally mess with the expect{...}.to syntax
+Style/BlockDelimiters:
+  Exclude:
+    - spec/**/*_spec.rb
+
+Style/ClassAndModuleCamelCase:
+  Exclude:
+     - lib/applications/**/*.rb
+
+Style/ClassVars:
+  Exclude:
+    - lib/waste_exemptions/permitted_attributes.rb
+
+Style/MethodName:
+  Exclude:
+     - lib/applications/**/*.rb
+
+Style/RegexpLiteral:
+  Description: >-
+    Use %r for regular expressions matching more than
+    `MaxSlashes` '/' characters.
+    Use %r only for regular expressions matching more than
+    `MaxSlashes` '/' character.
+  Enabled: false
+
+Style/VariableName:
+  Exclude:
+     - lib/applications/**/*.rb
+
+SingleLineMethods:
+ Description: 'Avoid single-line methods.'
+ Enabled: false
+
+SpaceBeforeFirstArg:
+ Description: >-
+   Checks that exactly one space is used between a method name
+   and the first argument for method calls without parentheses.
+ Enabled: false
+
+Style/SpaceAroundKeyword:
+ Description: 'Use a space around keywords if appropriate.'
+ Enabled: false
+
+SpaceAfterNot:
+ Description: Tracks redundant space after the ! operator.
+ Enabled: false
+
+SpaceBeforeComment:
+ Description: >-
+   Checks for missing space between code and a comment on the
+   same line.
+ Enabled: false

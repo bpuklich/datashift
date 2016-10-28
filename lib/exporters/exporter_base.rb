@@ -1,6 +1,5 @@
-# Copyright:: (c) Autotelik Media Ltd 2011
+# Copyright:: (c) Autotelik Media Ltd 2015
 # Author ::   Tom Statter
-# Date ::     Aug 2010
 # License::   MIT
 #
 #  Details::  Base class for Exporters, which provide services to export a Model
@@ -10,12 +9,13 @@ module DataShift
 
   class ExporterBase
 
-    attr_accessor :filename
-  
-    def initialize(filename)
-      @filename = filename
+    attr_accessor :configuration
+    attr_accessor :file_name
+
+    def initialize
+      @configuration = DataShift::Exporters::Configuration.call
     end
-    
+
   end
 
 end

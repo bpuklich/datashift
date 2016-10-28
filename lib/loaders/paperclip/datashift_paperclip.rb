@@ -24,24 +24,24 @@ module DataShift
     # =>  :recursive : Descend tree looking for files rather than just supplied path
 
     def self.get_files(path, options = {})
-      return [path] if(File.file?(path))
+      return [path] if File.file?(path)
       glob = options[:glob] ? options[:glob] : '*.*'
-      glob = (options['recursive'] || options[:recursive])  ? "**/#{glob}" : glob
+      glob = (options['recursive'] || options[:recursive]) ? "**/#{glob}" : glob
 
       Dir.glob("#{path}/#{glob}", File::FNM_CASEFOLD)
     end
 
     def get_file( attachment_path )
 
-      unless File.exists?(attachment_path) && File.readable?(attachment_path)
+      unless File.exist?(attachment_path) && File.readable?(attachment_path)
         logger.error("Cannot process Image from #{Dir.pwd}: Invalid Path #{attachment_path}")
         raise PathError.new("Cannot process Image : Invalid Path #{attachment_path}")
       end
 
       file = begin
-        File.new(attachment_path, "rb")
+        File.new(attachment_path, 'rb')
       rescue => e
-        puts e.inspect
+        logger.error(e.inspect)
         raise PathError.new("ERROR : Failed to read image from #{attachment_path}")
       end
 
@@ -72,55 +72,38 @@ module DataShift
     #
     #       Give : { :has_attached_file_attribute => :icon }
     #
-    def create_paperclip_attachment(klass, attachment_path, record = nil, attach_to_record_field = nil, options = {})
+    def create_paperclip_attachment(klass, attachment_path, options = {})
 
       logger.info("Paperclip::create_paperclip_attachment on Class #{klass}")
 
       has_attached_file_attribute = options[:has_attached_file_name] ? options[:has_attached_file_name].to_sym : :attachment
 
-      # e.g  (:attachment => File.read)
-
       attachment_file = get_file(attachment_path)
-      paperclip_attributes = { has_attached_file_attribute => attachment_file }
 
-      paperclip_attributes.merge!(options[:attributes]) if(options[:attributes])
+      paperclip_attributes = { "#{has_attached_file_attribute}": attachment_file}
+
+      paperclip_attributes.merge!(options[:attributes]) if options[:attributes]
 
       begin
-        @attachment = klass.new(paperclip_attributes, :without_protection => true)
+        @attachment = klass.new(paperclip_attributes)
       rescue => e
         logger.error( e.backtrace)
-        logger.error("Failed to create PaperClip Attachment for cl;ass #{klass} : #{e.inspect}")
-        raise CreateAttachmentFailed.new("Failed to create PaperClip Attachment from : #{attachment_path}")
+        raise CreateAttachmentFailed.new("Failed [#{e.message}] creating PaperClip Attachment on #{klass} for [#{attachment_path}]")
       ensure
         attachment_file.close unless attachment_file.closed?
       end
 
-      begin
-
-        if(@attachment.save)
-          puts "Success: Created Attachment #{@attachment.id} : #{@attachment.attachment_file_name}"
-
-          if(attach_to_record_field.is_a? MethodDetail)
-            DataShift::Populator.new().prepare_and_assign(attach_to_record_field, record, @attachment)
-          else
-            # assume its not a has_many and try basic send
-            record.send("#{attach_to_record_field}=", @attachment)
-          end if(record && attach_to_record_field)
-
-        else
-          puts "ERROR : Problem saving to DB : #{@attachment.inspect}"
-          puts @attachment.errors.messages.inspect
-        end
+      if @attachment.save
+        logger.info("Success: Created Attachment #{@attachment.id} : #{@attachment.attachment_file_name}")
 
         @attachment
-      rescue => e
-        logger.error("Problem saving Paperclip Attachment: #{e.inspect}")
-        puts e.inspect
-        raise CreateAttachmentFailed.new("PaperClip error - Problem saving Attachment")
-      ensure
-        attachment_file.close unless attachment_file.closed?
+      else
+        logger.error('Problem creating and saving Paperclip Attachment')
+        logger.error(@attachment.errors.messages.inspect)
+        raise CreateAttachmentFailed.new('PaperClip error - Problem saving Attachment')
       end
     end
+
   end
 
 end

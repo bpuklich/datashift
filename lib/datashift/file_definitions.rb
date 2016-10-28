@@ -59,10 +59,10 @@ module FileDefinitions
   attr_accessor :current_line
 
   # Set the delimiter to use when splitting a line - can be either a String, or a Regexp
-  attr_writer   :field_delim
+  attr_writer :field_delim
 
-  def initialize( line  = nil )
-    @key   = String.new
+  def initialize( line = nil )
+    @key = ''
     parse(line) unless line.nil?
   end
 
@@ -72,9 +72,8 @@ module FileDefinitions
   end
 
   def self.subclasses
-    @subclasses ||=[]
+    @subclasses ||= []
   end
-
 
   # Return the field delimiter used when splitting a line
   def field_delim
@@ -84,14 +83,14 @@ module FileDefinitions
   # Parse each line of a file based on the field definition, yields self for each successive line
   #
   def each( file )
-    File::new(file).each_line do |line|
+    File.new(file).each_line do |line|
       parse( line )
       yield self
     end
   end
 
   def fields
-    @fields = self.class.field_definition.collect {|f| instance_variable_get "@#{f}" }
+    @fields = self.class.field_definition.collect { |f| instance_variable_get "@#{f}" }
     @fields
   end
 
@@ -128,16 +127,18 @@ module FileDefinitions
     def add_field(field, add_accessor = true)
       @field_definition ||= []
       @field_definition << field.to_s
-      attr_accessor field  if(add_accessor)
+      attr_accessor field  if add_accessor
     end
-
 
     # Helper to generate methods that return the complete list of fixed width fields
     # and associated ranges in this File definition, and parse a line.
     # e.g create_field_definition %w{ trade_id  drOrCr ccy costCentre postingDate amount }
     #
     def create_fixed_definition( field_range_map )
-      raise ArgumentError.new('Please supply hash to create_fixed_definition') unless field_range_map.is_a? Hash
+
+      unless field_range_map.is_a?(Hash)
+        raise ArgumentError, 'Please supply hash to create_fixed_definition'
+      end
 
       keys = field_range_map.keys.collect(&:to_s)
       string_map = Hash[*keys.zip(field_range_map.values).flatten]
@@ -172,9 +173,8 @@ module FileDefinitions
 
     # Create accessors for each field
     def create_field_attr_accessors
-      self.field_definition.each {|f| attr_accessor f}
+      field_definition.each { |f| attr_accessor f }
     end
-
 
     ###############################
     # PARSING + FILE MANIPULATION #
@@ -185,14 +185,12 @@ module FileDefinitions
       limit = options[:limit]
       count = 0
       lines = []
-      File::new(file).each_line do |line|
+      File.new(file).each_line do |line|
         break if limit && ((count += 1) > limit)
-        lines << self.new( line )
+        lines << new( line )
       end
       lines
     end
-
-
 
     # Split a file, whose field definition is represented by self,
     # into seperate streams, based on the values of one if it's fields.
@@ -216,9 +214,13 @@ module FileDefinitions
       unless filtered.empty?
         log :info, "Writing seperate streams to #{path}"
 
-        filtered.each { |strm, objects| RecsBase::write( {"keys_#{field}_#{strm}.csv" => objects.collect(&:key).join("\n")}, path) } if(options.key?(:keys))
+        filtered.each do |strm, objects|
+          RecsBase.write( { "keys_#{field}_#{strm}.csv" => objects.collect(&:key).join("\n") }, path)
+        end if options.key?(:keys)
 
-        filtered.each { |strm, objects| RecsBase::write( {"#{field}_#{strm}.csv" => objects.collect(&:current_line).join("\n")}, path) }
+        filtered.each do |strm, objects|
+          RecsBase.write( { "#{field}_#{strm}.csv" => objects.collect(&:current_line).join("\n") }, path)
+        end
       end
     end
 
@@ -247,19 +249,19 @@ module FileDefinitions
 
       filtered = {}
 
-      if( self.new.respond_to?(field) )
+      if new.respond_to?(field)
 
         log :info, "Splitting on #{field}"
 
         File.open( file_name ) do |t|
           t.each do |line|
-            next unless(line && line.chomp!)
-            x = self.new(line)
+            next unless line && line.chomp!
+            x = new(line)
 
-            value = x.send( field.to_sym )    # the actual field value from the specified field column
+            value = x.send( field.to_sym ) # the actual field value from the specified field column
             next if value.nil?
 
-            if( regex.nil? || value.match(regex) )
+            if regex.nil? || value.match(regex)
               filtered[value] ? filtered[value] << x : filtered[value] = [x]
             end
           end
@@ -268,11 +270,11 @@ module FileDefinitions
         log :warn, "Field [#{field}] nor defined for file definition #{self.class.name}"
       end
 
-      if( options[:sort])
+      if options[:sort]
         filtered.values.each( &:sort )
         return filtered
       end
-      return filtered
+      filtered
     end
 
     # Open and parse a file, replacing a value in the specfied field.
@@ -291,16 +293,17 @@ module FileDefinitions
     #
     def file_set_field_by_map( file_name, fields, value_map, regex = nil )
 
-      lines, objects = [],[]
+      lines = []
+      objects = []
 
-      if fields.is_a?(Array)
-        attribs = fields
-      else
-        attribs = "#{fields}".split(',')
-      end
+      attribs = if fields.is_a?(Array)
+                  fields
+                else
+                  fields.to_s.split(',')
+                end
 
       attribs.collect! do |attrib|
-        raise ArgumentError.new("Field: #{attrib} is not a field on #{self.class.name}") unless self.new.respond_to?(attrib)
+        raise ArgumentError, "Field: #{attrib} is not a field on #{self.class.name}" unless new.respond_to?(attrib)
       end
 
       log :info, "#{self.class.name} - updating field(s) #{fields} in #{file_name}"
@@ -309,14 +312,16 @@ module FileDefinitions
         t.each do |line|
           if line.chomp.empty?
             lines << line
-            objects << self.new
+            objects << new
             next
           end
-          x = self.new(line)
+          x = new(line)
 
           attribs.each do |a|
             old_value = x.instance_variable_get( "@#{a}" )
-            x.instance_variable_set( "@#{a}", value_map[old_value] ) if value_map[old_value] || (regex && old_value.keys.detect {|k| k.match(regx) })
+            if value_map[old_value] || (regex && old_value.keys.detect { |k| k.match(regx) })
+              x.instance_variable_set( "@#{a}", value_map[old_value] )
+            end
           end
 
           objects << x
@@ -324,9 +329,9 @@ module FileDefinitions
         end
       end
 
-      return lines, objects
+      [lines, objects]
     end
-  end   # END class methods
+  end # END class methods
 
   # Open and parse a file, replacing a value in the specfied field.
   # Does not update the file itself. Does not write a new output file.
@@ -345,9 +350,9 @@ module FileDefinitions
   #
   def file_set_field( file_name, field, old_value, new_value, regex = nil )
 
-    map = {old_value => new_value}
+    map = { old_value => new_value }
 
-    return file_set_field_by_map(file_name, field, map, regex)
+    file_set_field_by_map(file_name, field, map, regex)
   end
 
 end

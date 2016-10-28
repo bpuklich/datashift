@@ -1,4 +1,3 @@
-
 FactoryGirl.define do
 
   factory :user do
@@ -11,8 +10,9 @@ FactoryGirl.define do
     budget 10000.23
   end
 
-  factory :category do
-    sequence(:reference) { |n| "category_00#{n}" }
+
+  factory :loader_release do
+    sequence(:name) { |n| "Loader Release V#{n}" }
   end
 
 end
