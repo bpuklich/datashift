@@ -89,7 +89,7 @@ module Datashift
         exit(-1)
       end
 
-     start_connections unless(Rails.application.initialized?)
+     start_connections #unless(Rails.application.initialized?)
 
       require 'paperclip/attachment_loader'
 
